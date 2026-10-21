@@ -201,7 +201,8 @@ fn mark_invalid(ui: &Ui, response: &Response, radius: CornerRadius, text: String
 ///
 /// Typed text that isn't a number is outlined while it is being edited. Committing it (Enter,
 /// clicking away) keeps the old value, as egui does, and the field stays outlined with the reason
-/// for a moment. Escape reverts without a mark.
+/// for a moment. Escape reverts without a mark. Committing the text as the drag value shows it
+/// leaves the value as it is, with any decimals the drag value doesn't show.
 ///
 /// ```
 /// # egui::__run_test_ui(|ui| {
@@ -269,9 +270,16 @@ impl Widget for LocalizedDragValue<'_> {
     fn ui(self, ui: &mut Ui) -> Response {
         let LocalizedDragValue { drag, numbers, unit, formatter, fallback } = self;
         let parsed: LastRead = Rc::new(Cell::new(None));
+        // The text egui shows this frame and its value. egui reads the text on every commit, edited
+        // or not; the parser returns `None` for this text, and the value keeps its decimals.
+        let shown: Rc<Cell<Option<(String, f64)>>> = Rc::new(Cell::new(None));
         let mut drag = drag.custom_formatter({
-            let numbers = numbers.clone();
-            move |value, decimals| formatter.as_ref().and_then(|f| f(value, decimals.clone())).unwrap_or_else(|| numbers.format(value, decimals))
+            let (numbers, shown) = (numbers.clone(), Rc::clone(&shown));
+            move |value, decimals| {
+                let text = formatter.as_ref().and_then(|f| f(value, decimals.clone())).unwrap_or_else(|| numbers.format(value, decimals));
+                shown.set(Some((text.clone(), value)));
+                text
+            }
         });
         if !unit.prefix.is_empty() {
             drag = drag.prefix(unit.prefix.clone());
@@ -282,6 +290,13 @@ impl Widget for LocalizedDragValue<'_> {
         drag = drag.custom_parser({
             let (numbers, unit, parsed) = (numbers.clone(), unit.clone(), Rc::clone(&parsed));
             move |text| {
+                let last = shown.take();
+                let unedited = last.as_ref().filter(|(s, _)| s == text).map(|&(_, value)| value);
+                shown.set(last);
+                if let Some(value) = unedited {
+                    parsed.set(Some((false, Ok(value))));
+                    return None;
+                }
                 let result = read(&numbers, &unit, fallback.as_ref(), text);
                 let still_typing = result.err().is_some_and(|error| incomplete(text, error));
                 parsed.set(Some((still_typing, result)));
@@ -397,7 +412,8 @@ struct Scrub {
 /// Text that isn't a number leaves the value unchanged and stays in the field, outlined, with the
 /// reason in a tooltip, until it is fixed or Escape restores the value. A number is rounded to the
 /// most decimals shown, half away from zero (`2,5` is 3 and `-0,5` is -1 in an integer field),
-/// then clamped to the range. The response is `changed()` when the value changed.
+/// then clamped to the range. Committing the text as the field shows it leaves the value as it is,
+/// with any decimals the field doesn't show. The response is `changed()` when the value changed.
 ///
 /// ```
 /// # egui::__run_test_ui(|ui| {
@@ -566,7 +582,7 @@ impl Widget for NumberField<'_> {
         }
         let mut text = match &state {
             Some(s) => s.text.clone(),
-            None if value == old && !entered => shown,
+            None if value == old && !entered => shown.clone(),
             None => numbers.format(value, decimals.clone()),
         };
         if select {
@@ -605,7 +621,8 @@ impl Widget for NumberField<'_> {
 
         let escape = ui.input(|i| i.key_pressed(Key::Escape));
         let mut error = state.as_ref().and_then(|s| s.error);
-        if response.lost_focus() && (escape || mixed && unit.strip(&text).is_empty()) {
+        // Text left as shown is not read: the value keeps the decimals the field doesn't show.
+        if response.lost_focus() && (escape || text == shown || mixed && unit.strip(&text).is_empty()) {
             state = None;
             error = None;
         } else if response.lost_focus() {

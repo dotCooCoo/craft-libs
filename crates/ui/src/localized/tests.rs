@@ -168,6 +168,31 @@ fn drag_value_does_not_mark_a_number_being_typed() {
     assert!(h.query_by_label("Check the decimal and grouping marks").is_none());
 }
 
+/// Clicks an empty part of the window, which takes the keyboard focus from a field.
+fn click_away<State>(h: &mut Harness<'_, State>) {
+    let at = egui::pos2(300.0, 300.0);
+    h.drag_at(at);
+    h.run();
+    h.drop_at(at);
+    h.run();
+}
+
+#[test]
+fn drag_value_keeps_a_value_it_shows_rounded_until_it_is_edited() {
+    let mut h = drag_harness("de", 1.23456789);
+    h.get_by_role(Role::SpinButton).click();
+    h.run();
+    h.key_press(Key::Enter);
+    h.run();
+    assert_eq!(*h.state(), 1.23456789, "Enter without an edit");
+    h.get_by_role(Role::SpinButton).click();
+    h.run();
+    click_away(&mut h);
+    assert_eq!(*h.state(), 1.23456789, "focus in and out");
+    type_into_drag(&mut h, "2,5");
+    assert_eq!(*h.state(), 2.5, "an edit still applies");
+}
+
 fn field_harness(tag: &str, value: f64) -> Harness<'static, f64> {
     let numbers = LocaleNumbers::from_tag(tag);
     let mut h = Harness::builder().allow_missing_glyphs().build_ui_state(
@@ -250,6 +275,40 @@ fn number_field_rounds_before_clamping() {
         h.run();
         assert_eq!(*h.state(), want, "{text}");
     }
+}
+
+#[test]
+fn number_field_keeps_a_value_it_shows_rounded_until_it_is_edited() {
+    let mut h = field_harness("en", 1.23456789);
+    assert_eq!(h.get_by_role(Role::TextInput).value().as_deref(), Some("1.234568"));
+    h.get_by_role(Role::TextInput).click();
+    h.run();
+    click_away(&mut h);
+    assert_eq!(*h.state(), 1.23456789, "focus in and out");
+    h.get_by_role(Role::TextInput).click();
+    h.run();
+    h.key_press(Key::Enter);
+    h.run();
+    assert_eq!(*h.state(), 1.23456789, "Enter without an edit");
+    type_into_field(&mut h, "1.234568");
+    assert_eq!(*h.state(), 1.23456789, "the text it shows, typed back");
+    h.get_by_role(Role::TextInput).click();
+    h.run();
+    h.get_by_role(Role::TextInput).type_text("9");
+    h.run();
+    h.key_press(Key::Escape);
+    h.run();
+    assert_eq!(*h.state(), 1.23456789, "Escape");
+    assert_eq!(h.get_by_role(Role::TextInput).value().as_deref(), Some("1.234568"));
+    type_into_field(&mut h, "1.2345678");
+    assert_eq!(*h.state(), 1.234568, "an edit is rounded to the decimals shown");
+
+    let mut h = field_harness("en", 1.23456789);
+    h.get_by_role(Role::TextInput).click();
+    h.run();
+    h.key_press(Key::ArrowUp);
+    h.run();
+    assert_eq!(*h.state(), 1.5, "a step changes the value");
 }
 
 #[test]
@@ -375,6 +434,19 @@ fn dragging_the_label_scrubs_the_field() {
     h.key_press(Key::Enter);
     h.run();
     assert_eq!(*h.state(), 7.0, "a click on the label focuses the field with its text selected");
+}
+
+#[test]
+fn a_click_on_the_label_keeps_a_value_it_shows_rounded() {
+    let mut h = scrub_harness(1.23456789);
+    let at = h.get_by_role(Role::Label).rect().center();
+    h.drag_at(at);
+    h.run();
+    h.drop_at(at);
+    h.run();
+    h.key_press(Key::Enter);
+    h.run();
+    assert_eq!(*h.state(), 1.23456789);
 }
 
 #[derive(Default)]
