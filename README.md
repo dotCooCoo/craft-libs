@@ -34,6 +34,10 @@ craft-<name> = { git = "https://github.com/storytold/craft-libs", rev = "<commit
 - [`craft-cms`](crates/cms/README.md): pure-Rust ICC v2/v4 colour management: profile parsing
   and writing, transforms, rendering intents, black point compensation, soft proofing, gamut
   checks, 3D LUTs and built-in profiles (sRGB, Display P3, synthetic coated CMYK and others).
+- [`craft-dialogs`](crates/dialogs/README.md): native file and message dialogs that never block
+  the event loop: queued requests shown at the end of the frame and answered on a later frame,
+  free-standing Open and Folder panels and Save sheets on macOS, case-insensitive filters. What
+  to do with the answer stays in each app.
 - [`craft-doc`](crates/doc/README.md): reads PhotoCraft `.pcraft`, VectorCraft `.vectorcraft`
   and EffectCraft `.ecproj` documents without the apps: the kind and version, the previews and
   PDF they carry, and their pages and layers. Rendering and editing stay in each app.
