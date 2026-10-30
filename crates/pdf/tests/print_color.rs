@@ -1092,7 +1092,7 @@ fn shading_ends(bytes: &[u8]) -> (Vec<f32>, Vec<f32>) {
 }
 
 /// Gradient stops keep their inks when a spot and process colors are rewritten into one
-/// DeviceN space, and mesh corners are written at 16 bits, so K 75% reads 0.750004 rather than
+/// DeviceN space, and mesh corners are written at 16 bits, so K 75% reads 0.749996 rather than
 /// 191/255.
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
 #[cfg_attr(not(target_arch = "wasm32"), test)]
