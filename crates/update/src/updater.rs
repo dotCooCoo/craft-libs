@@ -8,13 +8,14 @@
 //! [`Updater::managed`] says why.
 
 use std::path::PathBuf;
-use std::sync::Arc;
-use std::sync::mpsc::{Receiver, TryRecvError, channel};
+use std::sync::mpsc::{Receiver, SendError, Sender, TryRecvError, channel};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use crate::dialog::{StartupPrompt, StartupPromptResponse};
 use crate::pins::{Choice, Pins};
 use crate::release::Release;
+use crate::self_update::Restart;
 use crate::translate::{Note, Translate, english};
 use crate::{App, Http, Paths, Platform, Stop, check_for_update, self_update};
 
@@ -42,7 +43,11 @@ pub enum Action {
     /// Open this page in the browser.
     OpenUrl(String),
     /// Close the app through its normal close path (which asks about unsaved work): the update is
-    /// installed and a helper restarts the app once it has exited.
+    /// installed and a helper restarts the app once it has exited. On Windows the helper, which
+    /// installs the update, starts when this is returned. When the app exits another way, such as
+    /// the window's close button or a quit with unsaved work, and drops the [`Updater`] as it exits,
+    /// the drop starts it. An app that ends the process in `on_exit` without dropping the `Updater` calls
+    /// [`Updater::start_pending_update`] there first.
     Close,
 }
 
@@ -89,11 +94,16 @@ pub struct Updater {
     requested: bool,
     started: bool,
     check: Option<Receiver<Checked>>,
-    install: Option<(Receiver<Result<(), Failure>>, Release)>,
+    install: Option<(Receiver<Result<Restart, Failure>>, Release)>,
     prompt: Option<StartupPrompt>,
-    restart: bool,
+    /// A finished installation waiting for the app to close: what still has to start then, and
+    /// the release, to offer again if it can't.
+    restart: Option<(Restart, Release)>,
     /// An update is installed and waits for the app to exit; nothing starts a second one.
     installed: bool,
+    /// Set when the `Updater` is dropped. An install worker sends its outcome while holding it,
+    /// and starts a finished installation's helper itself once it is set.
+    dropped: Arc<Mutex<bool>>,
     /// The version-choice file to read in place of [`Pins::default_path`] (tests).
     pins_path: Option<PathBuf>,
     /// The launcher's choice for this app when it is not stable, as of the last check or offer.
@@ -116,8 +126,9 @@ impl Updater {
             check: None,
             install: None,
             prompt: None,
-            restart: false,
+            restart: None,
             installed: false,
+            dropped: Arc::new(Mutex::new(false)),
             pins_path: None,
             managed: None,
             translate: english,
@@ -308,9 +319,9 @@ impl Updater {
             if let Some(outcome) = outcome {
                 let release = self.install.take().map(|(_, release)| release);
                 match outcome {
-                    Ok(()) => {
+                    Ok(restart) => {
                         self.installed = true;
-                        self.restart = true;
+                        self.restart = release.map(|release| (restart, release));
                         let note = self.installed_note();
                         if let Some(prompt) = &mut self.prompt {
                             prompt.is_installing = false;
@@ -351,10 +362,24 @@ impl Updater {
     /// and a close that the user then cancels would leave it waiting for an exit that never comes.
     pub fn show_if(&mut self, ctx: &egui::Context, can_start: bool) -> Action {
         // The close waits for the app to hold no unsaved work: the user may have edited while the
-        // update installed, and a close they cancel is asked again once the work is saved.
-        if self.restart && can_start {
-            self.restart = false;
-            return Action::Close;
+        // update installed. The Windows helper starts only now, since it waits just a minute for
+        // the app to exit.
+        if can_start && let Some((restart, release)) = self.restart.take() {
+            match restart.start() {
+                Ok(()) => return Action::Close,
+                Err(e) => {
+                    log::warn!("{} self-update failed: {e}", self.app.name);
+                    // Nothing will install it: the update is on offer again.
+                    self.installed = false;
+                    if self.prompt.is_none() {
+                        self.prompt = Some(self.prompt_for(release));
+                    }
+                    if let Some(prompt) = &mut self.prompt {
+                        prompt.is_installing = false;
+                        prompt.set_message(e);
+                    }
+                }
+            }
         }
         let Some(prompt) = &mut self.prompt else { return Action::None };
         match prompt.show(ctx) {
@@ -373,6 +398,33 @@ impl Updater {
                 self.prompt = None;
                 Action::None
             }
+        }
+    }
+
+    /// Starts the helper of an installed update that is still waiting for the app to close, so
+    /// that the update installs once the app has exited. Call it when the app exits by a path
+    /// that did not come through [`Action::Close`]; dropping the `Updater` calls it too. Later
+    /// calls do nothing. An installation still running when the `Updater` is dropped starts its
+    /// helper itself when it finishes.
+    pub fn start_pending_update(&mut self) {
+        // An installation that finished since the last `tick`.
+        if let Some((rx, release)) = &self.install
+            && let Ok(outcome) = rx.try_recv()
+        {
+            match outcome {
+                Ok(restart) => {
+                    self.restart = Some((restart, release.clone()));
+                    self.installed = true;
+                }
+                Err(Failure::Installer(e)) => log::warn!("{} self-update failed: {e}", self.app.name),
+                Err(Failure::Updater(note)) => log::warn!("{} self-update failed: {}", self.app.name, note.translated(english)),
+            }
+            self.install = None;
+        }
+        if let Some((restart, _)) = self.restart.take()
+            && let Err(e) = restart.start()
+        {
+            log::warn!("{} self-update failed: {e}", self.app.name);
         }
     }
 
@@ -405,10 +457,11 @@ impl Updater {
         let (tx, rx) = channel();
         let (app, version, ctx, release) = (self.app, self.version.clone(), ctx.clone(), prompt.release.clone());
         let worker_release = release.clone();
+        let dropped = Arc::clone(&self.dropped);
         let spawned = std::thread::Builder::new().name("self-update".into()).spawn(move || {
             let run = || install(app, &installed, worker_release, &version).map_err(Failure::Installer);
             let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(run)).unwrap_or_else(|_| Err(Failure::panicked()));
-            let _ = tx.send(outcome);
+            deliver(app, &tx, &dropped, outcome);
             ctx.request_repaint();
         });
         match spawned {
@@ -421,7 +474,34 @@ impl Updater {
     }
 }
 
-fn install(app: &'static App, installed: &self_update::Install, mut release: Release, version: &str) -> Result<(), String> {
+impl Drop for Updater {
+    /// The app is exiting: an installed update that is still waiting starts its helper, which
+    /// waits for this process to exit before it installs.
+    fn drop(&mut self) {
+        // Held while the channel is read: a worker sent its outcome before, and it is read here,
+        // or it sends after and starts its helper itself.
+        let dropped = Arc::clone(&self.dropped);
+        let mut dropped = dropped.lock().unwrap_or_else(PoisonError::into_inner);
+        *dropped = true;
+        self.start_pending_update();
+    }
+}
+
+/// Sends the install worker's outcome to the [`Updater`]. When the `Updater` has been dropped
+/// (the app is exiting), the worker starts a finished installation's helper itself, since
+/// nothing will start it at a close.
+fn deliver(app: &App, tx: &Sender<Result<Restart, Failure>>, dropped: &Mutex<bool>, outcome: Result<Restart, Failure>) {
+    let gone = dropped.lock().unwrap_or_else(PoisonError::into_inner);
+    let unsent = if *gone { Some(outcome) } else { tx.send(outcome).err().map(|SendError(outcome)| outcome) };
+    drop(gone);
+    if let Some(Ok(restart)) = unsent
+        && let Err(e) = restart.start()
+    {
+        log::warn!("{} self-update failed: {e}", app.name);
+    }
+}
+
+fn install(app: &'static App, installed: &self_update::Install, mut release: Release, version: &str) -> Result<Restart, String> {
     let http = Http::new(&format!("{}/Update", app.name)).map_err(|e| format!("could not initialize HTTP: {e}"))?;
     if release.assets.is_empty()
         && let Some(full) = check_for_update(app, &http, version).map_err(|e| format!("could not fetch release assets: {e}"))?
@@ -430,7 +510,7 @@ fn install(app: &'static App, installed: &self_update::Install, mut release: Rel
     }
     let paths = Paths::for_app(app).map_err(|e| format!("could not find paths: {e}"))?;
     let platform = Platform::current().ok_or("unsupported platform for self update")?;
-    self_update::update(app, installed, &release, platform, &http, &paths, &Stop::default(), &mut |_| {}, &|| Ok(()), Some(version))
+    self_update::prepare_update(app, installed, &release, platform, &http, &paths, &Stop::default(), &mut |_| {}, &|| Ok(()), Some(version))
 }
 
 /// Download in the prompt: the release page, when it is a safe web link (an app may build its
@@ -642,7 +722,7 @@ mod tests {
     fn a_dropped_install_worker_is_an_error() {
         let ctx = egui::Context::default();
         let mut u = updater(Ok(None));
-        let (tx, rx) = channel::<Result<(), Failure>>();
+        let (tx, rx) = channel::<Result<Restart, Failure>>();
         u.install = Some((rx, newer()));
         drop(tx);
         u.tick(&ctx);
@@ -701,7 +781,7 @@ mod tests {
         let mut u = updater(Ok(Some(newer())));
         let (tx, rx) = channel();
         u.install = Some((rx, newer()));
-        assert!(tx.send(Ok(())).is_ok());
+        assert!(tx.send(Ok(Restart::scheduled())).is_ok());
         u.tick(&ctx);
         assert_eq!(u.show(&ctx), Action::Close);
         u.prompt = None;
@@ -742,7 +822,7 @@ mod tests {
         // An installed update names the app, in the language of the moment.
         let (tx, rx) = channel();
         u.install = Some((rx, newer()));
-        assert!(tx.send(Ok(())).is_ok());
+        assert!(tx.send(Ok(Restart::scheduled())).is_ok());
         u.tick(&ctx);
         assert!(message(&u).starts_with("FR The update is installed. Close PhotoCraft"), "{}", message(&u));
         FRENCH.store(false, Ordering::Relaxed);
@@ -763,7 +843,7 @@ mod tests {
         u.offer(newer());
         let (tx, rx) = channel();
         u.install = Some((rx, newer()));
-        assert!(tx.send(Ok(())).is_ok());
+        assert!(tx.send(Ok(Restart::scheduled())).is_ok());
         u.tick(&ctx);
         assert_eq!(frame(&mut u, &ctx, false), Action::None, "unsaved work holds the close back");
         assert_eq!(frame(&mut u, &ctx, true), Action::Close);
@@ -776,10 +856,150 @@ mod tests {
         let mut u = updater(Ok(None));
         let (tx, rx) = channel();
         u.install = Some((rx, newer()));
-        assert!(tx.send(Ok(())).is_ok());
+        assert!(tx.send(Ok(Restart::scheduled())).is_ok());
         u.tick(&ctx);
         assert_eq!(u.show(&ctx), Action::Close);
         assert_eq!(u.show(&ctx), Action::None);
+    }
+
+    /// A finished installation that still has to start its helper starts it only when the app
+    /// may close, and only once.
+    #[test]
+    fn the_helper_starts_once_when_the_app_closes() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let ctx = egui::Context::default();
+        let mut u = updater(Ok(None));
+        u.offer(newer());
+        let starts = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&starts);
+        let (tx, rx) = channel();
+        u.install = Some((rx, newer()));
+        let restart = Restart::later(move || {
+            counter.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        });
+        assert!(tx.send(Ok(restart)).is_ok());
+        u.tick(&ctx);
+        assert_eq!(starts.load(Ordering::SeqCst), 0, "the helper waits for the close");
+        assert_eq!(frame(&mut u, &ctx, false), Action::None);
+        assert_eq!(starts.load(Ordering::SeqCst), 0, "unsaved work holds the helper back");
+        assert_eq!(frame(&mut u, &ctx, true), Action::Close);
+        assert_eq!(starts.load(Ordering::SeqCst), 1);
+        assert_eq!(frame(&mut u, &ctx, true), Action::None);
+        assert_eq!(starts.load(Ordering::SeqCst), 1, "the helper starts once");
+    }
+
+    /// A counter and a helper that adds one to it each time it starts.
+    fn counted_restart() -> (Arc<std::sync::atomic::AtomicUsize>, Restart) {
+        let starts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counter = Arc::clone(&starts);
+        let restart = Restart::later(move || {
+            counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(())
+        });
+        (starts, restart)
+    }
+
+    /// An app that exits without [`Action::Close`] still starts the waiting helper, once, when
+    /// the updater is dropped.
+    #[test]
+    fn dropping_the_updater_starts_a_waiting_helper_once() {
+        use std::sync::atomic::Ordering;
+        let ctx = egui::Context::default();
+        let mut u = updater(Ok(None));
+        let (starts, restart) = counted_restart();
+        let (tx, rx) = channel();
+        u.install = Some((rx, newer()));
+        assert!(tx.send(Ok(restart)).is_ok());
+        u.tick(&ctx);
+        assert_eq!(frame(&mut u, &ctx, false), Action::None, "unsaved work holds the close back");
+        assert_eq!(starts.load(Ordering::SeqCst), 0);
+        drop(u);
+        assert_eq!(starts.load(Ordering::SeqCst), 1);
+
+        // Picked up from the worker without a `tick` first.
+        let mut u = updater(Ok(None));
+        let (starts, restart) = counted_restart();
+        let (tx, rx) = channel();
+        u.install = Some((rx, newer()));
+        assert!(tx.send(Ok(restart)).is_ok());
+        u.start_pending_update();
+        assert_eq!(starts.load(Ordering::SeqCst), 1);
+        u.start_pending_update();
+        drop(u);
+        assert_eq!(starts.load(Ordering::SeqCst), 1, "the helper starts once");
+    }
+
+    /// An installation that finishes after the updater was dropped starts its helper once; one
+    /// the updater receives waits for the close.
+    #[test]
+    fn an_install_finishing_after_the_updater_is_dropped_starts_its_helper() {
+        use std::sync::atomic::Ordering;
+        let mut u = updater(Ok(None));
+        let dropped = Arc::clone(&u.dropped);
+        let (starts, restart) = counted_restart();
+        let (tx, rx) = channel();
+        u.install = Some((rx, newer()));
+        drop(u);
+        assert_eq!(starts.load(Ordering::SeqCst), 0);
+        deliver(&crate::suite::LAUNCHER, &tx, &dropped, Ok(restart));
+        assert_eq!(starts.load(Ordering::SeqCst), 1);
+
+        // Sent while the drop has read the channel but not yet released the receiver.
+        let (starts, restart) = counted_restart();
+        let (tx, _rx) = channel();
+        deliver(&crate::suite::LAUNCHER, &tx, &Mutex::new(true), Ok(restart));
+        assert_eq!(starts.load(Ordering::SeqCst), 1, "a receiver about to be dropped is not sent to");
+
+        let (starts, restart) = counted_restart();
+        let (tx, rx) = channel();
+        deliver(&crate::suite::LAUNCHER, &tx, &Mutex::new(false), Ok(restart));
+        assert_eq!(starts.load(Ordering::SeqCst), 0, "the updater starts it at the close");
+        assert!(rx.try_recv().is_ok_and(|outcome| outcome.is_ok()));
+    }
+
+    /// A failed installation picked up at exit leaves nothing installed and nothing waiting.
+    #[test]
+    fn a_failed_install_picked_up_at_exit_leaves_nothing_waiting() {
+        let mut u = updater(Ok(None));
+        let (tx, rx) = channel::<Result<Restart, Failure>>();
+        u.install = Some((rx, newer()));
+        assert!(tx.send(Err("couldn't download the update".into())).is_ok());
+        u.start_pending_update();
+        assert!(u.install.is_none(), "the finished job is cleared");
+        assert!(!u.installed);
+        assert!(u.restart.is_none());
+    }
+
+    /// A helper started at [`Action::Close`] does not start again when the updater is dropped.
+    #[test]
+    fn a_helper_started_at_close_does_not_start_again_on_drop() {
+        use std::sync::atomic::Ordering;
+        let ctx = egui::Context::default();
+        let mut u = updater(Ok(None));
+        let (starts, restart) = counted_restart();
+        let (tx, rx) = channel();
+        u.install = Some((rx, newer()));
+        assert!(tx.send(Ok(restart)).is_ok());
+        u.tick(&ctx);
+        assert_eq!(frame(&mut u, &ctx, true), Action::Close);
+        drop(u);
+        assert_eq!(starts.load(Ordering::SeqCst), 1);
+    }
+
+    /// A helper that can't start keeps the app open and offers the update again with the reason.
+    #[test]
+    fn a_helper_that_cannot_start_keeps_the_app_open() {
+        let ctx = egui::Context::default();
+        let mut u = updater(Ok(None));
+        let (tx, rx) = channel();
+        u.install = Some((rx, newer()));
+        assert!(tx.send(Ok(Restart::later(|| Err("couldn't schedule the update (denied)".into())))).is_ok());
+        u.tick(&ctx);
+        assert_eq!(frame(&mut u, &ctx, true), Action::None);
+        let prompt = u.prompt.as_ref().map(|p| (p.is_installing, p.status_message.clone()));
+        assert_eq!(prompt, Some((false, Some("couldn't schedule the update (denied)".into()))));
+        assert!(!u.installed, "the update is on offer again");
     }
 }
 
