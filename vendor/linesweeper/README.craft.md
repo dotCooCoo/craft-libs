@@ -5,8 +5,8 @@ changes listed under Local changes. `.cargo_vcs_info.json` names the commit it w
 `824b0791a750f7b27b8edcbb6c6244d0e629875e`. That commit is not in the GitHub repository the manifest
 names, which is archived; its README says development moved off GitHub.
 
-Every file here except this one, `SOURCE.json`, `src/curve/mod.rs` and `src/sweep/sweep_line.rs` is
-byte for byte the file in the `.crate` archive. `SOURCE.json` records the hash of the `.crate` download
+Every file here except this one, `SOURCE.json`, `docs/sweep.typ`, `src/curve/mod.rs` and
+`src/sweep/sweep_line.rs` is byte for byte the file in the `.crate` archive. `SOURCE.json` records the hash of the `.crate` download
 (`source_archive_sha256`) and, for every file kept, the hash in the package (`source_sha256`) and the
 hash here (`sha256`). `upstream_repository` is null because no public repository this copy can name
 holds `upstream_revision`. `local_patches` describes each local change.
@@ -17,6 +17,9 @@ holds `upstream_revision`. `local_patches` describes each local change.
 |---|---|---|---|
 | The doc comment of `SweepLine::line_segment` says it can return a segment that has exited, which `segment_range` leaves out | `Craft patch (exited slots)` | `src/sweep/sweep_line.rs` | none, comment only |
 | `intersect_cubics_rec` gives the precomputed approximations the end x values of the cut curves instead of those of the whole pieces, so an almost-horizontal piece compared over part of its height is not reported as close to a curve that is far from it | `Craft patch (cut end bounds)` | `src/curve/mod.rs` | `curve::test::almost_horizontal_piece_cut_to_the_overlap` |
+| In `docs/sweep.typ`, the intersection scan to the left compares each segment with `alpha^(i+1)` instead of `alpha^i`. With `alpha^i`, its first pass compared `alpha^i` with itself, and the lemma after it is stated for `alpha^(i+1)` | none | `docs/sweep.typ` | none |
+| In `docs/sweep.typ`, "condi0.2tions" reads "conditions", and `q(i+i)` reads `q(i+1)`, the first index for which `q` is false | none | `docs/sweep.typ` | none |
+| In `docs/sweep.typ`, the lemma for the intersection scan to the left asks for the ordering invariant on `(alpha^1, ..., alpha^(i+1))` and the crossing invariant on `(alpha^1, ..., alpha^i)`, which is how the bidirectional lemma uses it. The argument for the order invariant cites the crossing invariant instead of a "third invariant"; the document defines two | none | `docs/sweep.typ` | none |
 
 Every change here updates this table and `SOURCE.json` in the same commit.
 
