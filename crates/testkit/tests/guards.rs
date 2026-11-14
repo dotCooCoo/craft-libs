@@ -522,6 +522,151 @@ fn run() {
     assert_eq!(lines(&std_instant([("src/run.rs", source)])), vec![4, 8, 9]);
 }
 
+fn finding_paths(findings: &[Finding]) -> Vec<&str> {
+    findings.iter().map(|f| f.path.as_str()).collect()
+}
+
+#[test]
+fn std_instant_skips_module_files_a_native_cfg_declares() {
+    let lib = r#"
+#[cfg(not(target_arch = "wasm32"))]
+mod native;
+mod web;
+#[cfg(feature = "extra")]
+mod extra;
+"#;
+    let native = "mod clock;\npub fn now() -> std::time::Instant { std::time::Instant::now() }\n";
+    let native_clock = "use std::time::Instant;\n";
+    let web = "#[cfg(unix)]\nmod imp;\npub fn now() { let _t = std::time::Instant::now(); }\n";
+    let web_imp = "use std::time::Instant;\n";
+    let sibling_imp = "use std::time::Instant;\n";
+    let extra = "use std::time::Instant;\n";
+    let files = [
+        ("src/lib.rs", lib),
+        ("src/native.rs", native),
+        ("src/native/clock.rs", native_clock),
+        ("src/web.rs", web),
+        ("src/web/imp.rs", web_imp),
+        ("src/imp.rs", sibling_imp),
+        ("src/extra.rs", extra),
+    ];
+    assert_eq!(finding_paths(&std_instant(files)), vec!["src/web.rs", "src/imp.rs", "src/extra.rs"]);
+}
+
+#[test]
+fn std_instant_skips_native_module_files_by_mod_rs_path_attribute_and_inline_module() {
+    let main = r#"
+#[cfg(unix)]
+pub(crate) mod sys;
+#[cfg(target_os = "macos")]
+#[path = "platform/mac_clock.rs"]
+mod mac;
+#[cfg(windows)]
+mod outer {
+    mod inner;
+}
+#[cfg(unix)]
+#[path = "platform/native.rs"]
+pub(in crate) mod native;
+"#;
+    let clock = "use std::time::Instant;\n";
+    let files = [
+        ("C:\\app\\src\\main.rs", main),
+        ("C:\\app\\src\\platform\\native.rs", clock),
+        ("C:\\app\\src\\sys\\mod.rs", "mod detail;\n"),
+        ("C:\\app\\src\\sys\\detail.rs", clock),
+        ("C:\\app\\src\\platform\\mac_clock.rs", clock),
+        ("C:\\app\\src\\outer\\inner.rs", clock),
+        ("C:\\app\\src\\mac.rs", clock),
+    ];
+    assert_eq!(finding_paths(&std_instant(files)), vec!["C:\\app\\src\\mac.rs"]);
+}
+
+#[test]
+fn std_instant_checks_a_module_file_that_a_web_declaration_also_names() {
+    let lib = r#"
+#[cfg(windows)]
+mod imp;
+#[cfg(target_arch = "wasm32")]
+mod imp;
+#[cfg(unix)]
+mod sys;
+"#;
+    let files = [
+        ("src/lib.rs", lib),
+        ("src/imp.rs", "mod detail;\n"),
+        ("src/imp/detail.rs", "use std::time::Instant;\n"),
+        ("src/sys.rs", "#[path = \"imp/detail.rs\"]\nmod shared;\n"),
+    ];
+    assert_eq!(finding_paths(&std_instant(files)), vec!["src/imp/detail.rs"]);
+}
+
+#[test]
+fn std_instant_reads_an_inline_module_path_attribute_as_the_folder_of_its_modules() {
+    let lib = r#"
+#[cfg(unix)]
+#[path = "native"]
+mod platform {
+    mod clock;
+}
+mod web;
+"#;
+    let web = r#"
+#[path = "shared"]
+mod inner {
+    #[cfg(windows)]
+    mod tick;
+}
+"#;
+    let clock = "use std::time::Instant;\n";
+    let files = [
+        ("src/lib.rs", lib),
+        ("src/native/clock.rs", clock),
+        ("src/platform/clock.rs", clock),
+        ("src/web.rs", web),
+        ("src/shared/tick.rs", clock),
+        ("src/web/shared/tick.rs", clock),
+    ];
+    assert_eq!(finding_paths(&std_instant(files)), vec!["src/platform/clock.rs", "src/web/shared/tick.rs"]);
+}
+
+#[test]
+fn std_instant_reads_top_level_path_attributes_of_a_non_mod_rs_file_from_its_folder() {
+    let a = r#"
+#[cfg(unix)]
+#[path = "native.rs"]
+mod imp;
+#[cfg(unix)]
+#[path = "native"]
+mod platform {
+    mod clock;
+}
+"#;
+    let clock = "use std::time::Instant;\n";
+    let files = [
+        ("src/lib.rs", "mod a;\n"),
+        ("src/a.rs", a),
+        ("src/native.rs", clock),
+        ("src/native/clock.rs", clock),
+        ("src/a/native.rs", clock),
+        ("src/a/native/clock.rs", clock),
+    ];
+    assert_eq!(finding_paths(&std_instant(files)), vec!["src/a/native.rs", "src/a/native/clock.rs"]);
+}
+
+#[test]
+fn std_instant_checks_module_files_declared_deeper_than_its_nesting_limit() {
+    let lib = format!("{}#[cfg(unix)]\nmod deep;\n{}", "mod m {\n".repeat(70), "}\n".repeat(70));
+    let shallow_lib = format!("{}#[cfg(unix)]\nmod deep;\n{}", "mod m {\n".repeat(3), "}\n".repeat(3));
+    let deep_path = format!("src/{}deep.rs", "m/".repeat(70));
+    let shallow_path = format!("src/{}deep.rs", "m/".repeat(3));
+    let clock = "use std::time::Instant;\n";
+    let files = [("src/lib.rs", lib.as_str()), (deep_path.as_str(), clock)];
+    assert_eq!(finding_paths(&std_instant(files)), vec![deep_path.as_str()]);
+    let files = [("src/lib.rs", shallow_lib.as_str()), (shallow_path.as_str(), clock)];
+    assert!(std_instant(files).is_empty());
+}
+
 #[test]
 fn wgsl_integer_literals_are_not_floats() {
     let shader = r#"

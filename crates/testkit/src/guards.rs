@@ -1,9 +1,10 @@
 //! Platform regression guards checking source code for known defects and lifecycle hazards.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 #[cfg(not(target_arch = "wasm32"))]
 use std::path::Path;
+use std::rc::Rc;
 
 /// A diagnostic finding reported by a source guard.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -622,6 +623,273 @@ fn native_only(toks: &[Token]) -> Vec<bool> {
     skip
 }
 
+/// A module declaration, `mod name;` or the head of `mod name { ... }`.
+#[derive(Debug, Clone)]
+struct ModName {
+    name: String,
+    /// The string of a `#[path = "..."]` attribute on the declaration.
+    path_attribute: Option<String>,
+}
+
+/// An out-of-line module declaration, `mod name;`.
+#[derive(Debug)]
+struct ModDecl {
+    module: ModName,
+    /// The inline modules (`mod a { ... }`) the declaration is inside, outermost first, shared between the
+    /// declarations inside them.
+    inline: Vec<Rc<ModName>>,
+    /// Whether the declaration is inside an item whose `cfg` is false on `wasm32-unknown-unknown`.
+    native: bool,
+}
+
+/// The most tokens [`path_attribute`] reads back from one `mod` keyword, so that hostile nesting cannot
+/// make the scan quadratic.
+const ATTRIBUTE_SCAN_LIMIT: usize = 4096;
+
+/// The index of the bracket `open` that matches the bracket `close` at `toks[end - 1]`, reading back
+/// from `end`, or `None` when it is not found within `budget` tokens.
+fn matching_open_back(toks: &[Token], end: usize, open: char, close: char, budget: &mut usize) -> Option<usize> {
+    let mut depth = 0usize;
+    let mut j = end;
+    while j > 0 && *budget > 0 {
+        j -= 1;
+        *budget -= 1;
+        if toks[j].is_punct(close) {
+            depth += 1;
+        } else if toks[j].is_punct(open) {
+            depth = depth.saturating_sub(1);
+            if depth == 0 {
+                return Some(j);
+            }
+        }
+    }
+    None
+}
+
+/// The string of a `#[path = "..."]` outer attribute on the item whose `mod` keyword is at `toks[m]`.
+fn path_attribute(toks: &[Token], m: usize) -> Option<String> {
+    let mut budget = ATTRIBUTE_SCAN_LIMIT;
+    let mut k = m;
+    if k > 0 && toks[k - 1].is_punct(')') {
+        // A visibility such as `pub(crate)`.
+        let j = matching_open_back(toks, k, '(', ')', &mut budget)?;
+        if j > 0 && toks[j - 1].is_ident("pub") {
+            k = j - 1;
+        }
+    } else if k > 0 && toks[k - 1].is_ident("pub") {
+        k -= 1;
+    }
+    let mut found = None;
+    while k > 0 && toks[k - 1].is_punct(']') {
+        let Some(j) = matching_open_back(toks, k, '[', ']', &mut budget) else { break };
+        if j == 0 || !toks[j - 1].is_punct('#') {
+            break;
+        }
+        if toks.get(j + 1).is_some_and(|t| t.is_ident("path"))
+            && toks.get(j + 2).is_some_and(|t| t.is_punct('='))
+            && let Some(Kind::Str(s)) = toks.get(j + 3).map(|t| &t.kind)
+        {
+            found = Some(s.clone());
+        }
+        k = j - 1;
+    }
+    found
+}
+
+/// What an open brace in [`module_decls`] opened.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Brace {
+    /// A block that is not an inline module.
+    Block,
+    /// An inline module, pushed on the inline stack.
+    Module,
+    /// An inline module deeper than [`MAX_NESTING`], not tracked.
+    TooDeep,
+}
+
+/// Every out-of-line module declaration in a file, in one pass that tracks the inline modules around it.
+///
+/// Declarations inside more than [`MAX_NESTING`] inline modules are left out, so their files are checked.
+fn module_decls(toks: &[Token], skip: &[bool]) -> Vec<ModDecl> {
+    let mut decls = Vec::new();
+    let mut braces: Vec<Brace> = Vec::new();
+    let mut inline: Vec<Rc<ModName>> = Vec::new();
+    let mut too_deep = 0usize;
+    for (i, tok) in toks.iter().enumerate() {
+        match &tok.kind {
+            Kind::Punct('{') => {
+                let brace = match i.checked_sub(2).map(|j| (&toks[j], &toks[j + 1].kind)) {
+                    Some((m, Kind::Ident(name))) if m.is_ident("mod") => {
+                        if too_deep == 0 && inline.len() < MAX_NESTING {
+                            inline.push(Rc::new(ModName { name: name.clone(), path_attribute: path_attribute(toks, i - 2) }));
+                            Brace::Module
+                        } else {
+                            too_deep += 1;
+                            Brace::TooDeep
+                        }
+                    }
+                    _ => Brace::Block,
+                };
+                braces.push(brace);
+            }
+            Kind::Punct('}') => match braces.pop() {
+                Some(Brace::Module) => {
+                    inline.pop();
+                }
+                Some(Brace::TooDeep) => too_deep -= 1,
+                _ => {}
+            },
+            Kind::Ident(k) if k == "mod" && too_deep == 0 => {
+                if let Some(Kind::Ident(name)) = toks.get(i + 1).map(|t| &t.kind)
+                    && toks.get(i + 2).is_some_and(|t| t.is_punct(';'))
+                {
+                    decls.push(ModDecl {
+                        module: ModName { name: name.clone(), path_attribute: path_attribute(toks, i) },
+                        inline: inline.clone(),
+                        native: skip.get(i).copied().unwrap_or(false),
+                    });
+                }
+            }
+            _ => {}
+        }
+    }
+    decls
+}
+
+/// A path with `\` read as `/`, empty and `.` components removed and `..` applied to the component before it.
+fn normalize_path(path: &str) -> String {
+    let path = path.replace('\\', "/");
+    let absolute = path.starts_with('/');
+    let mut parts: Vec<&str> = Vec::new();
+    for part in path.split('/') {
+        match part {
+            "" | "." => {}
+            ".." if parts.last().is_some_and(|p| *p != "..") => {
+                parts.pop();
+            }
+            p => parts.push(p),
+        }
+    }
+    let joined = parts.join("/");
+    if absolute { format!("/{joined}") } else { joined }
+}
+
+/// `child` below the folder `parent`, normalized. A `child` that is an absolute path (`/x`, `\x` or `C:...`)
+/// stands alone. `\\` is read as one separator, since a string literal keeps its escapes.
+fn join_path(parent: &str, child: &str) -> String {
+    let child = child.replace("\\\\", "/");
+    if parent.is_empty() || child.starts_with('/') || child.starts_with('\\') || child.as_bytes().get(1) == Some(&b':') {
+        normalize_path(&child)
+    } else {
+        normalize_path(&format!("{parent}/{child}"))
+    }
+}
+
+/// The paths, normalized, where the module `decl` declared in the file at `parent` (normalized) can be.
+///
+/// The modules of `lib.rs`, `main.rs` and `mod.rs` are in the file's folder, and those of any other file
+/// are in the folder named after its stem. Each inline module around the declaration adds a folder named
+/// after it, or with a `path` attribute, moves to that path relative to the current folder (without the
+/// stem folder). The module is then `<name>.rs` or `<name>/mod.rs` there, or with a `path` attribute, that
+/// path relative to the current folder, again without the stem folder.
+fn module_files(parent: &str, decl: &ModDecl) -> Vec<String> {
+    let (dir, file) = match parent.rsplit_once('/') {
+        Some(("", file)) => ("/", file),
+        Some(split) => split,
+        None => ("", parent),
+    };
+    let mut folder = dir.to_string();
+    let mut stem = (!matches!(file, "lib.rs" | "main.rs" | "mod.rs")).then(|| file.strip_suffix(".rs").unwrap_or(file));
+    for inline in &decl.inline {
+        if let Some(attr) = &inline.path_attribute {
+            folder = join_path(&folder, attr);
+            stem = None;
+        } else {
+            if let Some(stem) = stem.take() {
+                folder = join_path(&folder, stem);
+            }
+            folder = join_path(&folder, &inline.name);
+        }
+    }
+    if let Some(attr) = &decl.module.path_attribute {
+        return vec![join_path(&folder, attr)];
+    }
+    if let Some(stem) = stem {
+        folder = join_path(&folder, stem);
+    }
+    let name = &decl.module.name;
+    vec![join_path(&folder, &format!("{name}.rs")), join_path(&folder, &format!("{name}/mod.rs"))]
+}
+
+/// For each file, whether it is native-only: a `mod` declaration in a native-only item, or any declaration
+/// in a native-only file, names it, and no chain of declarations outside native-only items reaches it from
+/// a crate root (a file that no declaration names).
+fn native_only_files(paths: &[String], decls: &[Vec<ModDecl>]) -> Vec<bool> {
+    let mut index: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
+    for (i, path) in paths.iter().enumerate() {
+        index.entry(path.as_str()).or_default().push(i);
+    }
+    // The files each declaration names, in the order of `decls`.
+    let children: Vec<Vec<(bool, Vec<usize>)>> = decls
+        .iter()
+        .enumerate()
+        .map(|(parent, file_decls)| {
+            file_decls
+                .iter()
+                .map(|decl| {
+                    let files =
+                        module_files(&paths[parent], decl).iter().flat_map(|c| index.get(c.as_str()).into_iter().flatten().copied()).collect();
+                    (decl.native, files)
+                })
+                .collect()
+        })
+        .collect();
+
+    // Files the web build compiles: crate roots, and every file a declaration outside a native-only item
+    // of such a file names.
+    let mut named = vec![false; paths.len()];
+    for (_, files) in children.iter().flatten() {
+        for &j in files {
+            named[j] = true;
+        }
+    }
+    let mut web = vec![false; paths.len()];
+    let mut queue: Vec<usize> = (0..paths.len()).filter(|&j| !named[j]).collect();
+    for &j in &queue {
+        web[j] = true;
+    }
+    while let Some(parent) = queue.pop() {
+        for (_, files) in children[parent].iter().filter(|(is_native, _)| !is_native) {
+            for &j in files {
+                if !web[j] {
+                    web[j] = true;
+                    queue.push(j);
+                }
+            }
+        }
+    }
+
+    // Files a native-only declaration names, and their descendants.
+    let mut native = vec![false; paths.len()];
+    let mut mark = |files: &[usize], queue: &mut Vec<usize>| {
+        for &j in files {
+            if !native[j] {
+                native[j] = true;
+                queue.push(j);
+            }
+        }
+    };
+    for (_, files) in children.iter().flatten().filter(|(is_native, _)| *is_native) {
+        mark(files, &mut queue);
+    }
+    while let Some(parent) = queue.pop() {
+        for (_, files) in &children[parent] {
+            mark(files, &mut queue);
+        }
+    }
+    native.iter().zip(&web).map(|(&n, &w)| n && !w).collect()
+}
+
 /// Add one finding for each line in `lines`, in line order, with the trimmed text of that line.
 fn report(findings: &mut Vec<Finding>, path: &str, content: &str, lines: &BTreeSet<usize>) {
     if lines.is_empty() {
@@ -693,6 +961,15 @@ where
 ///   (for example `#[cfg(not(target_arch = "wasm32"))]`, `#[cfg(all(unix, ...))]`, `#[cfg(target_os = "macos")]`,
 ///   or `#![cfg(...)]` for the rest of a module). A predicate that depends on a feature or on `test` is not
 ///   known from the source, so the item is checked.
+/// * **Module files**: a `mod name;` inside such an item makes the module's file native-only, and so are the
+///   files of the modules declared in it, when they are among `files`, unless a chain of declarations outside
+///   such items also reaches the file from a crate root (a file that no declaration names). The module's file is `name.rs` or
+///   `name/mod.rs` next to `lib.rs`, `main.rs` or `mod.rs`, and in the folder named after any other file's
+///   stem, below the folders of enclosing inline modules; a `#[path = "..."]` attribute on the declaration
+///   or on an enclosing inline module is followed. Paths are compared as text with `\` read as `/`, so the files must be named the same way
+///   (for example all from one `rust_sources` call), and a crate root other than `lib.rs` or `main.rs`
+///   (such as `src/bin/tool.rs`) is read as an ordinary module file. A declaration inside more than 64 inline
+///   modules is not followed, so its file is checked.
 /// * **Limitations**: This is a lexical source guard. It does not expand macros, resolve paths through other
 ///   modules or re-exports, rename `std` itself (`use std as s;`), or follow aliases in a different scope than
 ///   the file.
@@ -701,8 +978,23 @@ where
     I: IntoIterator,
     I::Item: AsFileSource,
 {
+    let files: Vec<I::Item> = files.into_iter().collect();
+    let paths: Vec<String> = files.iter().map(|file| normalize_path(file.path())).collect();
+    // Only the declarations are kept from this pass, so the tokens of every file are never held at once.
+    let decls: Vec<Vec<ModDecl>> = files
+        .iter()
+        .map(|file| {
+            let toks = lex_rust(file.content());
+            module_decls(&toks, &native_only(&toks))
+        })
+        .collect();
+    let excluded = native_only_files(&paths, &decls);
+
     let mut findings = Vec::new();
-    for file in files {
+    for (file, excluded) in files.iter().zip(excluded) {
+        if excluded {
+            continue;
+        }
         let path = file.path();
         let content = file.content();
         let toks = lex_rust(content);
