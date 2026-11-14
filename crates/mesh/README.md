@@ -132,7 +132,7 @@ mutations of every byte of good files.
 | `max_materials` | 100 000 | materials; images; OBJ material libraries; 3MF base materials and textures together |
 | `max_nodes` | 100 000 | nodes, and node visits when the hierarchy is walked (ends cycles); 3MF placed objects, build items and components |
 | `max_depth` | 64 | node nesting; 3MF component nesting (ends cycles) |
-| `max_data_bytes` | 1 GiB | buffers and material libraries taken from the resolver; embedded image bytes; skin and animation values; the binary chunk `write_glb` builds; what a 3MF package inflates to, and its textures; what an FBX file keeps: meshes, image bytes and parsed values (binary: 8 bytes per array element, and other values are not counted; ASCII: `size_of::<Prop>()` per value, each array element included, plus string bytes) |
+| `max_data_bytes` | 1 GiB | buffers and material libraries taken from the resolver; embedded image bytes; skin and animation values; the binary chunk `write_glb` builds; what a 3MF package inflates to, and its textures; an FBX file's meshes, image bytes and parsed values (binary: 8 bytes per array element, and other values are not counted; ASCII: `size_of::<Prop>()` per value, each array element included, plus string bytes; record names and the overhead of records and their containers are not counted) |
 | `max_extras` | 10 000 | skins, animations, cameras, lights, buffers (each); channels of one animation |
 
 Fixed bounds: a PLY header of 1 MiB, 64 elements and 256 properties per element; 2^24 components
