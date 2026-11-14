@@ -13,12 +13,15 @@ holds `upstream_revision`. `local_patches` describes each local change.
 
 ## Local changes
 
-The files under Local changes are `src/sweep/sweep_line.rs` and `src/curve/mod.rs`.
+The files under Local changes are `src/sweep/sweep_line.rs`, `src/curve/mod.rs` and `docs/sweep.typ`.
 
 | Change | Code comment label | Touches | Tests |
 |---|---|---|---|
 | The doc comment of `SweepLine::line_segment` says it can return a segment that has exited, which `segment_range` leaves out. | `Craft patch (exited slots)` | `src/sweep/sweep_line.rs` | None |
 | `intersect_cubics_with_precomputed_decomp` compares the precomputed approximations of two pieces with `ish_tolerance` before it cuts either cubic to their shared y-range, and when that gives one `Left` or `Right` interval it records that order without cutting them | `Craft patch (approximation first)` | `src/curve/mod.rs` | `curve::test::approximation_first_keeps_the_curve_order` |
+| The intersection scan to the left in `docs/sweep.typ` compares each segment with `alpha^(i+1)` instead of `alpha^i`. With `alpha^i`, its first pass compared `alpha^i` with itself, and the lemma after it is stated for `alpha^(i+1)`. | None | `docs/sweep.typ` | None |
+| Two typos in `docs/sweep.typ` are corrected: "condi0.2tions" reads "conditions", and `q(i+i)` reads `q(i+1)`, the first index for which `q` is false. | None | `docs/sweep.typ` | None |
+| The lemma for the intersection scan to the left in `docs/sweep.typ` asks for the ordering invariant on `(alpha^1, ..., alpha^(i+1))` and the crossing invariant on `(alpha^1, ..., alpha^i)`, which is how the bidirectional lemma uses it. The argument for the order invariant cites the crossing invariant instead of a "third invariant"; the document defines two. | None | `docs/sweep.typ` | None |
 
 Every change here updates this table and `SOURCE.json` in the same commit.
 
