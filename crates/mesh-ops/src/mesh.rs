@@ -174,6 +174,12 @@ fn per_vertex(len: usize, n: usize) -> bool {
     n > 0 && len == n
 }
 
+/// The centroid of a triangle's three UVs, summed in f64: the centroid of finite UVs is finite
+/// even when their f32 sum would overflow.
+fn uv_centroid(uvs: [Vec2; 3]) -> Vec2 {
+    (uvs.iter().map(Vec2::as_dvec2).sum::<glam::DVec2>() / 3.0).as_vec2()
+}
+
 /// A copy of `from` in a reserved array, or `OutOfMemory` naming `what`. Copying a `Copy` element
 /// does not allocate; [`try_names`] and [`try_submeshes`] copy elements that own a string.
 fn try_copy<T: Copy>(from: &[T], what: &'static str) -> Result<Vec<T>> {
@@ -660,7 +666,7 @@ impl Mesh {
             .triangles_of(m)
             .filter_map(|t| {
                 let [a, b, c] = self.tri(t)?;
-                let uv = (*self.uvs.get(a)? + *self.uvs.get(b)? + *self.uvs.get(c)?) / 3.0;
+                let uv = uv_centroid([*self.uvs.get(a)?, *self.uvs.get(b)?, *self.uvs.get(c)?]);
                 uv.is_finite().then(|| (uv.x.floor() as i32, uv.y.floor() as i32))
             })
             .collect())
@@ -765,7 +771,7 @@ impl Mesh {
 
         for t in &material_triangles {
             let Some(tri) = self.tri(*t) else { continue };
-            let centroid = tri.iter().map(|v| self.uvs.get(*v).copied().unwrap_or_default()).sum::<Vec2>() / 3.0;
+            let centroid = uv_centroid(tri.map(|v| self.uvs.get(v).copied().unwrap_or_default()));
             let place = vertices.len();
             vertices.extend(tri.map(|v| (v, place, centroid)));
         }
@@ -1588,6 +1594,17 @@ mod tests {
         for v in 2..=fan + 1 {
             assert_eq!(m.uvs[v as usize], centroid(v - 2), "vertex {v}");
         }
+    }
+
+    #[test]
+    fn uv_centroids_of_large_finite_uvs_stay_finite() {
+        // Three UVs of 1.5e38 sum past f32::MAX; their centroid is 1.5e38.
+        let big = Vec2::splat(1.5e38);
+        let mut m = Mesh::from_parts(vec![Vec3::ZERO, Vec3::X, Vec3::Y], None, vec![big; 3], vec![0, 1, 2], "a").unwrap();
+        let l = Limits::default();
+        assert_eq!(m.uv_tiles(0, &l).unwrap().into_iter().collect::<Vec<_>>(), vec![(i32::MAX, i32::MAX)]);
+        m.map_material_uvs_with(0, |c, _| c, &l).unwrap();
+        assert_eq!(m.uvs, vec![big; 3]);
     }
 
     /// One triangle in UV tile (0, 0) that `listings` submeshes of material 0 all list.
