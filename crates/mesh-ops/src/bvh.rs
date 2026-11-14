@@ -543,7 +543,12 @@ fn closest_on_triangle_f64(p: DVec3, [a, b, c]: [DVec3; 3]) -> (DVec3, f64, f64)
     let sum = va + vb + vc;
     if sum > 0.0 {
         let (v, w) = (vb / sum, vc / sum);
-        return (a + ab * v + ac * w, v, w);
+        // Project p onto the plane instead of rebuilding a + ab v + ac w, whose rounding moves a
+        // point that lies on the plane off it. A point whose height above the plane is 0 stays p.
+        let n = ab.cross(ac);
+        let nn = n.length_squared();
+        let q = if nn > 0.0 { p - n * (n.dot(ap) / nn) } else { a + ab * v + ac * w };
+        return (q, v, w);
     }
     // No area and no region matched: the nearest of the three edges.
     let on_edge = |from: DVec3, to: DVec3| {
@@ -617,6 +622,17 @@ mod tests {
         let hit = bvh.nearest(p, 0.0, &|_| true).unwrap();
         assert_eq!(hit.t, 0.0);
         assert!((hit.u - 0.5).abs() < 1e-4 && (hit.v - 0.25).abs() < 1e-4, "{hit:?}");
+    }
+
+    #[test]
+    fn nearest_finds_a_coplanar_point_inside_a_triangle_at_distance_zero() {
+        let l = Limits::default();
+        let bvh = Bvh::from_slices(&[[-1.0, -1.0, 0.0], [2.0, 0.0, 0.0], [0.0, 3.0, 0.0]], &[0, 1, 2], &l).unwrap();
+        // The origin is a + 3/11 (b - a) + 2/11 (c - a); rebuilding it from those weights in
+        // floating point gives x of about -5.6e-17 instead of 0.
+        let hit = bvh.nearest(Vec3::ZERO, 0.0, &|_| true).unwrap();
+        assert_eq!(hit.t, 0.0);
+        assert!((hit.u - 3.0 / 11.0).abs() < 1e-6 && (hit.v - 2.0 / 11.0).abs() < 1e-6, "{hit:?}");
     }
 
     #[test]
