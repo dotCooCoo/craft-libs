@@ -10,7 +10,7 @@ file in the `.crate` archive. `SOURCE.json` records the hash of the `.crate` dow
 (`source_archive_sha256`) and, for every file kept, the hash in the package (`source_sha256`) and the
 hash here (`sha256`). `upstream_repository` is null because no public repository this copy can name
 holds `upstream_revision`. `local_patches` describes each local change.
-The two changed files are `src/sweep/sweep_line.rs` and `src/topology.rs`.
+The three changed files are `src/sweep/sweep_line.rs`, `src/topology.rs` and `docs/sweep.typ`.
 
 ## Local changes
 
@@ -18,6 +18,9 @@ The two changed files are `src/sweep/sweep_line.rs` and `src/topology.rs`.
 |---|---|---|---|
 | The doc comment of `SweepLine::line_segment` says it can return a segment that has exited, which `segment_range` leaves out. | `Craft patch (exited slots)` | `src/sweep/sweep_line.rs` | None (doc comment only) |
 | `Topology` allocates one output segment for each run of coincident horizontal pieces between two points instead of one per piece, and none for a run whose winding numbers cancel. n overlapping rectangles that share their top and bottom edges give 6n - 2 output segments instead of 2n² + 2n. The contours do not change. `has_normal_contours` and `is_disjoint_tags` read the winding numbers on either side of a run, not the ones between its pieces. | `Craft patch (coincident horizontals)` | `src/topology.rs` | `topology::tests::coincident_horizontals_get_one_output_segment_per_run` |
+| The intersection scan to the left in `docs/sweep.typ` compares each segment with `alpha^(i+1)` instead of `alpha^i`. With `alpha^i`, its first pass compared `alpha^i` with itself, and the lemma after it is stated for `alpha^(i+1)`. | None | `docs/sweep.typ` | None (documentation only) |
+| Two typos in `docs/sweep.typ` are corrected. "condi0.2tions" reads "conditions", and `q(i+i)` reads `q(i+1)`, the first index for which `q` is false. | None | `docs/sweep.typ` | None (documentation only) |
+| The lemma for the intersection scan to the left in `docs/sweep.typ` asks for the ordering invariant on `(alpha^1, ..., alpha^(i+1))` and the crossing invariant on `(alpha^1, ..., alpha^i)`, which is how the bidirectional lemma uses it. The argument for the order invariant cites the crossing invariant instead of a "third invariant"; the document defines two. | None | `docs/sweep.typ` | None (documentation only) |
 
 Every change here updates this table and `SOURCE.json` in the same commit.
 
