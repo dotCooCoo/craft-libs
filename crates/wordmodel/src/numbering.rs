@@ -70,7 +70,7 @@ impl Default for Level {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct AbstractNum {
     pub id: u32,
@@ -93,6 +93,20 @@ pub struct AbstractNum {
     /// `None`: derived from the levels.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub multi_level_type: Option<String>,
+}
+
+// Explicit source-level presence is reader provenance used to distinguish an omitted Word level
+// from an effective default. It is intentionally not part of the document model's structural
+// equality, just as it is not serialized.
+impl PartialEq for AbstractNum {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+            && self.name == other.name
+            && self.levels == other.levels
+            && self.nsid == other.nsid
+            && self.tmpl == other.tmpl
+            && self.multi_level_type == other.multi_level_type
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
@@ -531,6 +545,14 @@ mod tests {
         numbering.abstracts.iter_mut().find(|a| a.id == abstract_id).unwrap().explicit_levels = Some(explicit);
         numbering.nums.iter_mut().find(|n| n.id == id).unwrap().level_overrides.push((1, Level::default()));
         assert!(numbering.level_is_defined(id, 1));
+    }
+
+    #[test]
+    fn explicit_level_metadata_does_not_change_model_equality() {
+        let mut with_metadata = AbstractNum::default();
+        let without_metadata = with_metadata.clone();
+        with_metadata.explicit_levels = Some([true; 9]);
+        assert_eq!(with_metadata, without_metadata);
     }
 
     /// Read-only counter APIs retain the renderer's bounds and never advance a list.
