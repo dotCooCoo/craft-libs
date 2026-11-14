@@ -1261,17 +1261,19 @@ impl Scales {
 /// Per-vertex tangents from the UV gradients of the triangles around each vertex: the fallback
 /// when MikkTSpace does not run or fails. `w` is -1 where the summed direction up the image
 /// (toward smaller v) lies against `cross(normal, tangent)`, and +1 otherwise, as MikkTSpace
-/// sets it.
+/// sets it. Edges, UV differences and sums are taken in `f64`, so an edge too small to survive
+/// division by the position scale in `f32` still sets the direction.
 fn simple_tangents(positions: &[Vec3], normals: &[Vec3], uvs: &[Vec2], indices: &[u32], scales: Scales) -> Result<Vec<Vec4>> {
-    let mut sums = try_filled(positions.len(), (Vec3::ZERO, Vec3::ZERO), "tangents")?;
+    let mut sums = try_filled(positions.len(), (DVec3::ZERO, DVec3::ZERO), "tangents")?;
+    let (position_scale, uv_scale) = (f64::from(scales.position), f64::from(scales.uv));
     for &[a, b, c] in indices.as_chunks::<3>().0 {
         let (a, b, c) = (a as usize, b as usize, c as usize);
         let (Some(pa), Some(pb), Some(pc)) = (positions.get(a), positions.get(b), positions.get(c)) else { continue };
         let (Some(ua), Some(ub), Some(uc)) = (uvs.get(a), uvs.get(b), uvs.get(c)) else { continue };
-        let (pa, pb, pc) = (*pa / scales.position, *pb / scales.position, *pc / scales.position);
-        let (ua, ub, uc) = (*ua / scales.uv, *ub / scales.uv, *uc / scales.uv);
-        let (e1, e2) = (pb - pa, pc - pa);
-        let (d1, d2) = (ub - ua, uc - ua);
+        let (pa, pb, pc) = (pa.as_dvec3(), pb.as_dvec3(), pc.as_dvec3());
+        let (ua, ub, uc) = (ua.as_dvec2(), ub.as_dvec2(), uc.as_dvec2());
+        let (e1, e2) = ((pb - pa) / position_scale, (pc - pa) / position_scale);
+        let (d1, d2) = ((ub - ua) / uv_scale, (uc - ua) / uv_scale);
         let determinant = d1.x * d2.y - d2.x * d1.y;
         if determinant.abs() < 1e-12 {
             continue;
@@ -1290,9 +1292,10 @@ fn simple_tangents(positions: &[Vec3], normals: &[Vec3], uvs: &[Vec2], indices: 
 
     let mut tangents = try_vec(sums.len(), "tangents")?;
     tangents.extend(sums.into_iter().enumerate().map(|(v, (t, up))| {
-        let t = unit(t).unwrap_or(Vec3::X);
+        let t = t.try_normalize().map(|t| t.as_vec3()).and_then(unit).unwrap_or(Vec3::X);
+        let up = up.try_normalize().map(|up| up.as_vec3()).unwrap_or(Vec3::ZERO);
         let n = normals.get(v).copied().and_then(unit).unwrap_or(Vec3::Y);
-        let w = if n.cross(t).dot(unit(up).unwrap_or(Vec3::ZERO)) < 0.0 { -1.0 } else { 1.0 };
+        let w = if n.cross(t).dot(up) < 0.0 { -1.0 } else { 1.0 };
         t.extend(w)
     }));
     Ok(tangents)
@@ -2270,6 +2273,19 @@ mod tests {
         let uvs = [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]];
         for t in crate::tangents(&positions, &[[1.0, 0.0, 0.0]; 3], &uvs, &[0, 1, 2], &l).unwrap() {
             assert!((Vec4::from_array(t) - Vec4::new(0.0, 1.0, 0.0, -1.0)).length() < 1e-5, "{t:?}");
+        }
+    }
+
+    #[test]
+    fn fallback_tangents_keep_edges_that_vanish_when_divided() {
+        // Edges of 1e-10 at x = 1e38: divided by 1e38 in f32 they underflow to zero, so the
+        // triangle counts as degenerate and the fallback computes its tangent.
+        let positions = [[1e38, 0.0, 0.0], [1e38, 1e-10, 0.0], [1e38, 0.0, 1e-10]];
+        // u grows along +z and v along +y: the tangent is +z, the bitangent points along -y, and
+        // cross(+x, +z) = -y, so w is +1.
+        let uvs = [[0.0, 0.0], [0.0, 1.0], [1.0, 0.0]];
+        for t in crate::tangents(&positions, &[[1.0, 0.0, 0.0]; 3], &uvs, &[0, 1, 2], &Limits::default()).unwrap() {
+            assert!((Vec4::from_array(t) - Vec4::new(0.0, 0.0, 1.0, 1.0)).length() < 1e-5, "{t:?}");
         }
     }
 
