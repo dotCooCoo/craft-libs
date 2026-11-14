@@ -987,11 +987,12 @@ impl Mesh {
             return;
         }
         let (lo, hi) = self.bounds();
-        // `Mesh::radius` is the real radius above its floor; a smaller mesh takes the second form.
+        // `Mesh::radius` is the real radius above its floor; a smaller mesh, or a scale past
+        // f32::MAX, takes the second form.
         let r = self.radius();
-        if lo.abs().max(hi.abs()).max_element() <= SAFE_MAGNITUDE && r > MIN_RADIUS {
+        let s = radius / r;
+        if lo.abs().max(hi.abs()).max_element() <= SAFE_MAGNITUDE && r > MIN_RADIUS && s.is_finite() {
             let c = (lo + hi) * 0.5;
-            let s = radius / r;
             if !(((lo - c) * s).is_finite() && ((hi - c) * s).is_finite()) {
                 return;
             }
@@ -2197,11 +2198,12 @@ mod tests {
 
     #[test]
     fn normalize_handles_the_largest_radii_and_the_smallest_meshes() {
-        // The unit quad has a radius of about 0.707, so f32::MAX is past what its corners reach.
+        // The unit quad has a radius of about 0.707, so f32::MAX divided by it passes f32::MAX;
+        // its corners still fit.
         let mut unit = quad();
-        let before = unit.clone();
         unit.normalize_to(f32::MAX);
-        assert_eq!(unit, before);
+        let corner = unit.positions[2] / f32::MAX;
+        assert!((corner - Vec3::new(1.0, 1.0, 0.0).normalize()).length() < 1e-4, "{:?}", unit.positions);
         unit.normalize_to(1e30);
         assert!(unit.positions.iter().all(|p| p.is_finite()), "{:?}", unit.positions);
         assert!((unit.radius() / 1e30 - 1.0).abs() < 1e-4, "{}", unit.radius());
@@ -2214,6 +2216,12 @@ mod tests {
             small.normalize_to(1.0);
             assert!((small.radius() - 1.0).abs() < 1e-4, "{size}: {}", small.radius());
         }
+        // A plane spanning ±0.001 is above the floor, and 1e38 divided by its radius passes
+        // f32::MAX; its corners still fit.
+        let mut tiny = crate::primitives::plane(0.002, 2);
+        tiny.normalize_to(1e38);
+        assert!(tiny.positions.iter().all(|p| p.is_finite()), "{:?}", tiny.positions);
+        assert!((tiny.radius() / 1e38 - 1.0).abs() < 1e-4, "{}", tiny.radius());
         // A mesh already near f32::MAX reaches the largest radius: its corners fit.
         let mut wide = quad();
         wide.positions = vec![Vec3::new(-3e38, -3e38, 0.0), Vec3::new(3e38, -3e38, 0.0), Vec3::new(3e38, 3e38, 0.0), Vec3::new(-3e38, 3e38, 0.0)];
