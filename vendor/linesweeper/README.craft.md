@@ -10,7 +10,7 @@ file in the `.crate` archive. `SOURCE.json` records the hash of the `.crate` dow
 (`source_archive_sha256`) and, for every file kept, the hash in the package (`source_sha256`) and the
 hash here (`sha256`). `upstream_repository` is null because no public repository this copy can name
 holds `upstream_revision`. `local_patches` describes each local change.
-The patched files are `src/sweep/sweep_line.rs` and `src/arbitrary.rs`.
+The patched files are `src/sweep/sweep_line.rs`, `src/arbitrary.rs` and `docs/sweep.typ`.
 
 ## Local changes
 
@@ -18,6 +18,9 @@ The patched files are `src/sweep/sweep_line.rs` and `src/arbitrary.rs`.
 |---|---|---|---|
 | The doc comment of `SweepLine::line_segment` says it can return a segment that has exited, which `segment_range` leaves out | `Craft patch (exited slots)` | `src/sweep/sweep_line.rs` | none |
 | `float_in_range` interpolates as `start * (1 - t) + end * t`, so a range such as `-1e308..1e308` gives a value in the range instead of NaN | `Craft patch (wide float range)` | `src/arbitrary.rs` | `float_in_range_handles_a_range_wider_than_f64_max` |
+| The intersection scan to the left compares each segment with `alpha^(i+1)` instead of `alpha^i`. With `alpha^i`, its first pass compared `alpha^i` with itself, and the lemma after it is stated for `alpha^(i+1)` | none (document text) | `docs/sweep.typ` | none |
+| Two typos are corrected. "condi0.2tions" reads "conditions", and `q(i+i)` reads `q(i+1)`, the first index for which `q` is false | none (document text) | `docs/sweep.typ` | none |
+| The lemma for the intersection scan to the left asks for the ordering invariant on `(alpha^1, ..., alpha^(i+1))` and the crossing invariant on `(alpha^1, ..., alpha^i)`, which is how the bidirectional lemma uses it. The argument for the order invariant cites the crossing invariant instead of a "third invariant"; the document defines two | none (document text) | `docs/sweep.typ` | none |
 
 Every change here updates this table and `SOURCE.json` in the same commit. To take a new linesweeper
 release, unpack the crates.io package, carry these changes over, regenerate `SOURCE.json`, and run the
