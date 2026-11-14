@@ -1,12 +1,13 @@
 # Local linesweeper 0.5.0 copy
 
 This is the crates.io linesweeper 0.5.0 package (MIT OR Apache-2.0) with some files left out and the
-local patches listed below. `.cargo_vcs_info.json` names the commit it was packaged from,
-`824b0791a750f7b27b8edcbb6c6244d0e629875e`. That commit is not in the GitHub repository the manifest
-names, which is archived; its README says development moved off GitHub.
+local patches listed below, to `src/sweep/sweep_line.rs` and `docs/sweep.typ`. `.cargo_vcs_info.json`
+names the commit it was packaged from, `824b0791a750f7b27b8edcbb6c6244d0e629875e`. That commit is not
+in the GitHub repository the manifest names, which is archived; its README says development moved off
+GitHub.
 
-Every file here except this one, `SOURCE.json` and the patched files below is byte for byte the file
-in the `.crate` archive. `SOURCE.json` records the hash of the `.crate` download
+Every file here except this one, `SOURCE.json` and the two patched files below is byte for byte the
+file in the `.crate` archive. `SOURCE.json` records the hash of the `.crate` download
 (`source_archive_sha256`) and, for every file kept, the hash in the package (`source_sha256`) and the
 hash here (`sha256`). `upstream_repository` is null because no public repository this copy can name
 holds `upstream_revision`. `local_patches` describes each local patch.
@@ -18,6 +19,9 @@ holds `upstream_revision`. `local_patches` describes each local patch.
 | `src/sweep/sweep_line.rs` | The doc comment of `SweepLine::line_segment` says it can return a segment that has exited, which `segment_range` leaves out. Code comments label the change `Craft patch (exited slots)`. |
 | `src/sweep/sweep_line.rs` | `Sweeper::next_line` handles a pair of segments at most once per sweep line for each pair of positions the two segments hold. A pair queued again at the same `y` and positions is queued at the pair's next order change instead, when that comes before both segments end. Nearly coincident segments whose comparisons are not transitive used to queue the same pairs at one `y` forever while memory grew. The `repeated_intersections_at_one_y` test sweeps five circles 7e-7 apart; test builds panic after `n^4` intersection events on one sweep line. |
 | `src/sweep/sweep_line.rs` | `Sweeper::handle_intersection` queues a delayed intersection only when its `y` is before the ends of both segments, as the intersection scans do. A delayed intersection at a segment's end used to panic in `CurveOrder::entry_at`. The `delayed_intersection_at_a_segment_end` test sweeps three wide, flat contours whose sweep delayed an intersection to a segment's end. |
+| `docs/sweep.typ` | The intersection scan to the left compares each segment with `alpha^(i+1)` instead of `alpha^i`. With `alpha^i`, its first pass compared `alpha^i` with itself, and the lemma after it is stated for `alpha^(i+1)`. |
+| `docs/sweep.typ` | Two typos are corrected. "condi0.2tions" reads "conditions", and `q(i+i)` reads `q(i+1)`, the first index for which `q` is false. |
+| `docs/sweep.typ` | The lemma for the intersection scan to the left asks for the ordering invariant on `(alpha^1, ..., alpha^(i+1))` and the crossing invariant on `(alpha^1, ..., alpha^i)`, which is how the bidirectional lemma uses it. The argument for the order invariant cites the crossing invariant instead of a "third invariant"; the document defines two. |
 
 `omitted_files` lists the 43 files of the package left out here, with their hashes:
 
