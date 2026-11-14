@@ -474,6 +474,34 @@ use std::time::Instant as MacInstant;
 }
 
 #[test]
+fn std_instant_ends_a_native_cfg_block_statement_at_its_closing_brace() {
+    let source = r#"
+fn run() {
+    #[cfg(unix)] {
+        let _a = std::time::Instant::now();
+    }
+    let t = std::time::Instant::now();
+}
+"#;
+    assert_eq!(lines(&std_instant([("src/run.rs", source)])), vec![6]);
+}
+
+#[test]
+fn std_instant_skips_a_method_call_after_a_native_cfg_block() {
+    let source = r#"
+fn run(x: Option<u64>) -> Option<u64> {
+    #[cfg(unix)]
+    { 0u64 }.saturating_add(std::time::Instant::now().elapsed().as_nanos() as u64);
+    #[cfg(unix)]
+    unsafe { x }.map(|_| std::time::Instant::now())?;
+    let t = std::time::Instant::now();
+    x
+}
+"#;
+    assert_eq!(lines(&std_instant([("src/run.rs", source)])), vec![7]);
+}
+
+#[test]
 fn std_instant_inner_cfg_covers_the_whole_file() {
     let source = r#"
 #![cfg(not(target_arch = "wasm32"))]

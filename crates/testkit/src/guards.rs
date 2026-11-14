@@ -540,9 +540,10 @@ const BLOCK_KEYWORDS: &[&str] =
 /// index of the bracket that closes the enclosing scope.
 ///
 /// It ends after a `;` or a `,` outside brackets, after the closing brace of a block item (one that
-/// starts with a keyword in [`BLOCK_KEYWORDS`] or is a macro call with braces) or of a match arm's
-/// block, or before a closing bracket of the enclosing scope. A `,` inside the angle brackets of a
-/// field's or a `let`'s type ends the item early, which leaves the rest of it checked.
+/// starts with `{` or a keyword in [`BLOCK_KEYWORDS`], or is a macro call with braces) or of a match
+/// arm's block, or before a closing bracket of the enclosing scope. When a `.` or `?` follows the
+/// closing brace of a block item, the item runs on to its `;` or `,`. A `,` inside the angle brackets
+/// of a field's or a `let`'s type ends the item early, which leaves the rest of it checked.
 fn item_end(toks: &[Token], start: usize, inner: bool) -> usize {
     let mut depth = 0usize;
     let mut block_item = false;
@@ -550,6 +551,9 @@ fn item_end(toks: &[Token], start: usize, inner: bool) -> usize {
     let mut j = start;
     while j < toks.len() {
         let at_top = depth == 0 && !inner;
+        if j == start && at_top && toks[j].is_punct('{') {
+            block_item = true;
+        }
         match &toks[j].kind {
             Kind::Ident(k) if at_top && BLOCK_KEYWORDS.contains(&k.as_str()) => block_item = true,
             Kind::Punct('!') if at_top && toks.get(j + 1).is_some_and(|t| t.is_punct('{')) => block_item = true,
@@ -562,6 +566,12 @@ fn item_end(toks: &[Token], start: usize, inner: bool) -> usize {
                 depth -= 1;
                 if depth == 0 && *c == '}' && (block_item || arm) && !inner {
                     if toks.get(j + 1).is_some_and(|t| t.is_ident("else")) {
+                        j += 1;
+                        continue;
+                    }
+                    if toks.get(j + 1).is_some_and(|t| t.is_punct('.') || t.is_punct('?')) {
+                        // A method call, field or `?` after the block continues the expression to its `;` or `,`.
+                        block_item = false;
                         j += 1;
                         continue;
                     }
