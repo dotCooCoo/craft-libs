@@ -38,6 +38,6 @@ expanded; blank padding past the grid's edge is clipped, data past it is an erro
 
 ## Features
 
-- `test-support`: `testing`, which builds small `.ods` packages in code (`spreadsheet`,
-  `content`, `package`), for the tests of crates that read spreadsheets. Not a general
+- `test-support` enables `testing`, which builds small `.ods` packages in code (`spreadsheet`,
+  `content`, `package`) for the tests of crates that read spreadsheets. It is not a general
   spreadsheet writer.
