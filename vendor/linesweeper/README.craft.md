@@ -13,12 +13,15 @@ holds `upstream_revision`. `local_patches` describes each local change.
 
 ## Local changes
 
-Two files differ from the package: `src/sweep/sweep_line.rs` and `src/segments.rs`.
+Three files differ from the package: `src/sweep/sweep_line.rs`, `src/segments.rs` and `docs/sweep.typ`.
 
 | Change | Code comment label | Touches | Tests |
 |---|---|---|---|
 | The doc comment of `SweepLine::line_segment` says it can return a segment that has exited, which `segment_range` leaves out | `Craft patch (exited slots)` | `src/sweep/sweep_line.rs` | none |
 | `Segments::add_points` skips a point equal to the one before it, as the closed-polyline path does, so it adds no zero-length segment | `Craft patch (repeated points)` | `src/segments.rs` | `segments::tests::add_points_skips_repeated_points` |
+| The intersection scan to the left in `docs/sweep.typ` compares each segment with `alpha^(i+1)` instead of `alpha^i`. With `alpha^i`, its first pass compared `alpha^i` with itself, and the lemma after it is stated for `alpha^(i+1)` | none | `docs/sweep.typ` | none |
+| Two typos in `docs/sweep.typ` are corrected: "condi0.2tions" reads "conditions", and `q(i+i)` reads `q(i+1)`, the first index for which `q` is false | none | `docs/sweep.typ` | none |
+| The lemma for the intersection scan to the left in `docs/sweep.typ` asks for the ordering invariant on `(alpha^1, ..., alpha^(i+1))` and the crossing invariant on `(alpha^1, ..., alpha^i)`, which is how the bidirectional lemma uses it. The argument for the order invariant cites the crossing invariant instead of a "third invariant"; the document defines two | none | `docs/sweep.typ` | none |
 
 Every change here updates this table and `SOURCE.json` in the same commit.
 
