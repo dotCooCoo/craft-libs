@@ -318,7 +318,7 @@ fn run() {
 
 #[test]
 fn test_wgsl_exact_f32_max_boundary() {
-    // 3.4028234663852886e38 is mathematical f32::MAX bit for bit
+    // 3.4028234663852886e38 rounds to f32::MAX, as an f32 and as an f64
     let exact_valid = r#"
 const EXACT_MAX: f32 = 3.4028234663852886e38;
 const NEG_EXACT_MAX: f32 = -3.4028234663852886e38;

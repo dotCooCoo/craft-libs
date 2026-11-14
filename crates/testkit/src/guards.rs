@@ -1160,14 +1160,16 @@ fn scan_wgsl_hex(code: &[u8], start: usize) -> (usize, usize, bool) {
 /// Guard: scans a single WGSL shader string and detects float literals outside their type's finite range.
 ///
 /// WebGPU compilers in browsers reject a float literal above `f32::MAX` (e.g. `3.40282347e38`) with a
-/// pipeline build error, which turns off GPU rendering. Exact values equal to `f32::MAX` can be written
-/// as `3.4028234663852886e38` or as the hex float `0x1.fffffep+127f`.
+/// pipeline build error, which turns off GPU rendering. `f32::MAX` can be written as the hex float
+/// `0x1.fffffep+127f`, which equals it, or as the decimal `3.4028234663852886e38`, which rounds to it.
 ///
 /// ### Policy and Limitations
 ///
 /// * **Conservative mathematical bound**: The guard compares the literal's value, rounded to `f64`,
 ///   with `f64::from(f32::MAX)`, or with 65504 (the largest finite `f16`) for an `h` suffix. Any literal
-///   above it is reported, even one that a compiler would round down to the maximum.
+///   above it is reported, even one that a compiler would round down to the maximum. A literal that exceeds
+///   the maximum by less than `f64` precision (such as `0x1.fffffe000000001p+127f`) rounds to the maximum and
+///   is not reported.
 /// * **Which literals**: decimal floats (with a `.`, an exponent or an `f`/`h` suffix) and hexadecimal floats
 ///   (`0x` with a `.` or a `p` exponent). Integer literals (`123`, `123u`, `0xFFi`, `0x1f`) are not floats and
 ///   are not reported. A `-` in front is not part of the literal, so `-1e39` is reported as `1e39`.
