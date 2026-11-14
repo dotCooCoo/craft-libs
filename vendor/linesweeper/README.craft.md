@@ -11,7 +11,7 @@ file in the `.crate` archive. `SOURCE.json` records the hash of the `.crate` dow
 hash here (`sha256`). `upstream_repository` is null because no public repository this copy can name
 holds `upstream_revision`. `local_patches` describes each local change.
 
-The two patched files are `src/sweep/sweep_line.rs` and `examples/visualize_op.rs`.
+The three patched files are `src/sweep/sweep_line.rs`, `examples/visualize_op.rs` and `docs/sweep.typ`.
 
 ## Local changes
 
@@ -19,6 +19,9 @@ The two patched files are `src/sweep/sweep_line.rs` and `examples/visualize_op.r
 |---|---|---|---|
 | The doc comment of `SweepLine::line_segment` says it can return a segment that has exited, which `segment_range` leaves out | `Craft patch (exited slots)` | `src/sweep/sweep_line.rs` | |
 | The `visualize_op` example draws its two input paths with `fill-rule="evenodd"`, the fill rule its operation uses | `Craft patch (example fill rule)` | `examples/visualize_op.rs` | `inputs_are_drawn_with_the_operation_fill_rule`, `svg_fill_rule_names` |
+| The intersection scan to the left in `docs/sweep.typ` compares each segment with `alpha^(i+1)` instead of `alpha^i`. With `alpha^i`, its first pass compared `alpha^i` with itself, and the lemma after it is stated for `alpha^(i+1)` | | `docs/sweep.typ` | |
+| Two typos in `docs/sweep.typ` are corrected. "condi0.2tions" reads "conditions", and `q(i+i)` reads `q(i+1)`, the first index for which `q` is false | | `docs/sweep.typ` | |
+| The lemma for the intersection scan to the left in `docs/sweep.typ` asks for the ordering invariant on `(alpha^1, ..., alpha^(i+1))` and the crossing invariant on `(alpha^1, ..., alpha^i)`, which is how the bidirectional lemma uses it. The argument for the order invariant cites the crossing invariant instead of a "third invariant"; the document defines two | | `docs/sweep.typ` | |
 
 Every change here updates this table and `SOURCE.json` in the same commit. To take a new linesweeper
 release, unpack the crates.io package, carry these changes over, regenerate `SOURCE.json`, and run the
