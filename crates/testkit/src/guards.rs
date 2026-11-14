@@ -1304,7 +1304,8 @@ fn is_cache_dir(dir: &Path) -> bool {
 /// * `*_test.rs`
 /// * `test.rs`
 /// * Any file below `dir` within a directory named `tests`, `benches`, `examples` or `target`, or whose
-///   name starts with `.`, or that holds a `CACHEDIR.TAG` file (a build output folder with another name).
+///   name starts with `.`, or that holds a `CACHEDIR.TAG` file starting with the signature line
+///   `Signature: 8a477f597d28d172789f06886806bc55` (a build output folder with another name).
 /// * Symbolic links (and, on Windows, junctions) to files or folders, which are not followed.
 ///
 /// Results are sorted lexicographically by file path for deterministic behavior across platforms.
