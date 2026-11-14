@@ -558,8 +558,8 @@ impl Mesh {
         let frame = |v: usize, t: Vec4| {
             let n = normals.get(v).copied().unwrap_or(Vec3::Y);
             // Normals outside the safe range are brought to unit length first, so the projection
-            // below stays finite.
-            let n = if scales.normal == 1.0 { n } else { (n / scales.normal).try_normalize().unwrap_or(Vec3::Y) };
+            // below stays finite. A normal that is not finite counts as +Y.
+            let n = if scales.normal == 1.0 && n.is_finite() { n } else { (n / scales.normal).try_normalize().unwrap_or(Vec3::Y) };
             let d = t.truncate();
             let o = (d - n * n.dot(d)).try_normalize().unwrap_or_else(|| n.any_orthonormal_vector());
             o.extend(if t.w < 0.0 { -1.0 } else { 1.0 })
@@ -1883,6 +1883,20 @@ mod tests {
         let edge_uvs = uvs.map(|uv| [uv[0] * 1e6, uv[1] * 1e6]);
         let t = crate::tangents(&quad_at(1e6), &normals, &edge_uvs, &indices, &limits).unwrap();
         assert!(t.iter().all(|t| (Vec4::from_array(*t) - Vec4::new(1.0, 0.0, 0.0, 1.0)).length() < 1e-4), "{t:?}");
+    }
+
+    #[test]
+    fn tangents_stay_finite_beside_a_non_finite_normal() {
+        for bad in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            let mut m = quad();
+            m.normals[1] = Vec3::new(bad, 0.0, 1.0);
+            m.compute_tangents();
+            assert_eq!(m.tangents.len(), 4, "{bad}");
+            for (v, t) in m.tangents.iter().enumerate() {
+                assert!(t.is_finite() && t.w.abs() == 1.0, "{bad}, vertex {v}: {t:?}");
+                assert!((t.truncate().length() - 1.0).abs() < 1e-5, "{bad}, vertex {v}: {t:?}");
+            }
+        }
     }
 
     #[test]
