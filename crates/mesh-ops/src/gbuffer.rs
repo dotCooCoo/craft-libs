@@ -257,7 +257,7 @@ impl Bins {
     /// and `bary` hold `w × h` entries) for the binned triangles; returns the overlap count.
     fn draw(&self, uvs: &[Vec2], indices: &[u32], (w, h): (u32, u32), tri: &mut [u32], bary: &mut [[f32; 2]]) -> u32 {
         let size = Vec2::new(w as f32, h as f32);
-        let band_len = BAND as usize * w as usize;
+        let band_len = band_texels(w, tri.len());
         let band = |(bi, (tri, bary)): (usize, (&mut [u32], &mut [[f32; 2]]))| {
             let mut overlaps = 0u32;
             let row0 = bi as u32 * BAND;
@@ -302,6 +302,14 @@ impl Bins {
         };
         each_band(tri, bary, band_len, band)
     }
+}
+
+/// Texels in one [`BAND`] of a `width`-wide buffer of `texels` texels, at most `texels` and at
+/// least 1. The product is taken in `u64` and capped at `texels`, so a band of a wide buffer fits
+/// a 32-bit `usize`.
+fn band_texels(width: u32, texels: usize) -> usize {
+    let band = u64::from(BAND) * u64::from(width);
+    usize::try_from(band).map_or(texels, |band| band.min(texels)).max(1)
 }
 
 /// Run `band` on each band of `len` texels (on several threads with `parallel`) and add up the
@@ -446,6 +454,21 @@ mod tests {
         assert_eq!(UvGBuffer::try_new(&m, 0, 16, 16, &l).unwrap(), UvGBuffer::new(&m, 0, 16, 16));
         let uvs: Vec<[f32; 2]> = m.uvs.iter().map(|uv| uv.to_array()).collect();
         assert_eq!(UvGBuffer::from_slices(&uvs, &m.indices, 16, 16, &l).unwrap(), UvGBuffer::new(&m, 0, 16, 16));
+    }
+
+    #[test]
+    fn gbuffer_band_stays_within_the_buffer() {
+        assert_eq!(band_texels(8, 8 * 100), BAND as usize * 8);
+        // A buffer shorter than a band is one band, even when 32 rows of its width would not fit a
+        // 32-bit usize (custom limits allow a side of 1 << 27).
+        assert_eq!(band_texels(1 << 27, 1 << 27), 1 << 27);
+        assert_eq!(band_texels(u32::MAX, u32::MAX as usize), u32::MAX as usize);
+        assert_eq!(band_texels(4, 3), 3);
+        // A wide one-row buffer is drawn as one band; the triangle covers its left half.
+        let l = Limits { max_gbuffer_side: 1 << 12, ..Limits::default() };
+        let uvs = [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]];
+        let g = UvGBuffer::from_slices(&uvs, &[0, 1, 2], 1 << 12, 1, &l).unwrap();
+        assert_eq!(g.covered_count(), 1 << 11);
     }
 
     #[test]
