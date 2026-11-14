@@ -13,12 +13,16 @@ holds `upstream_revision`. `local_patches` describes each local change.
 
 ## Local changes
 
-Three files differ from the package: `src/sweep/sweep_line.rs`, `src/segments.rs` and `src/lib.rs`.
+Four files differ from the package: `src/sweep/sweep_line.rs`, `src/segments.rs`, `src/lib.rs` and
+`docs/sweep.typ`.
 
 | Change | Code comment label | Touches | Tests |
 |---|---|---|---|
 | The doc comment of `SweepLine::line_segment` says it can return a segment that has exited, which `segment_range` leaves out | `Craft patch (exited slots)` | `src/sweep/sweep_line.rs` | none |
 | `Topology::from_path`, the other `Topology` constructors that take Bézier paths, `Segments::add_bez_path` and `binary_op` skip a `ClosePath` that comes before the first point of a path instead of panicking with "Can't start a segment on a ClosePath" | `Craft patch (leading ClosePath)` | `src/segments.rs`, `src/lib.rs` | `tests::leading_close_path` |
+| In `docs/sweep.typ`, the intersection scan to the left compares each segment with `alpha^(i+1)` instead of `alpha^i`. With `alpha^i`, its first pass compared `alpha^i` with itself, and the lemma after it is stated for `alpha^(i+1)` | none | `docs/sweep.typ` | none |
+| In `docs/sweep.typ`, "condi0.2tions" reads "conditions", and `q(i+i)` reads `q(i+1)`, the first index for which `q` is false | none | `docs/sweep.typ` | none |
+| In `docs/sweep.typ`, the lemma for the intersection scan to the left asks for the ordering invariant on `(alpha^1, ..., alpha^(i+1))` and the crossing invariant on `(alpha^1, ..., alpha^i)`, which is how the bidirectional lemma uses it. The argument for the order invariant cites the crossing invariant instead of a "third invariant"; the document defines two | none | `docs/sweep.typ` | none |
 
 Every change here updates this table and `SOURCE.json` in the same commit.
 
