@@ -562,6 +562,26 @@ struct Node {
     content: bool,
 }
 
+fn bounded_node(e: &quick_xml::events::BytesStart<'_>, depth: usize, nodes: &mut usize, attributes: &mut usize) -> Result<Node, String> {
+    if depth >= MAX_VALIDATION_DEPTH {
+        return Err(format!("XML nesting exceeds the {MAX_VALIDATION_DEPTH} level validation limit"));
+    }
+    *nodes = nodes.saturating_add(1);
+    if *nodes > MAX_VALIDATION_NODES {
+        return Err(format!("XML exceeds the {MAX_VALIDATION_NODES} node validation limit"));
+    }
+    let mut attrs = Vec::new();
+    for attr in e.attributes().with_checks(true) {
+        let attr = attr.map_err(|err| format!("invalid attribute: {err}"))?;
+        attrs.push(String::from_utf8_lossy(attr.key.as_ref()).to_string());
+    }
+    *attributes = attributes.saturating_add(attrs.len());
+    if *attributes > MAX_VALIDATION_ATTRIBUTES {
+        return Err(format!("XML exceeds the {MAX_VALIDATION_ATTRIBUTES} attribute validation limit"));
+    }
+    Ok(Node { name: String::from_utf8_lossy(e.name().as_ref()).to_string(), attrs, children: vec![], text: false, content: false })
+}
+
 fn read_tree(xml: &str) -> Result<Node, String> {
     use quick_xml::events::Event;
     if xml.len() > MAX_VALIDATION_XML_BYTES {
@@ -572,53 +592,23 @@ fn read_tree(xml: &str) -> Result<Node, String> {
     let mut root = None;
     let mut nodes = 0usize;
     let mut attributes = 0usize;
-    let node = |e: &quick_xml::events::BytesStart| -> Result<Node, String> {
-        let mut attrs = Vec::new();
-        for attr in e.attributes().with_checks(true) {
-            let attr = attr.map_err(|err| format!("invalid attribute: {err}"))?;
-            attrs.push(String::from_utf8_lossy(attr.key.as_ref()).to_string());
-        }
-        Ok(Node { name: String::from_utf8_lossy(e.name().as_ref()).to_string(), attrs, children: vec![], text: false, content: false })
-    };
     loop {
         match r.read_event().map_err(|e| e.to_string())? {
             Event::Start(e) => {
-                if stack.len() >= MAX_VALIDATION_DEPTH {
-                    return Err(format!("XML nesting exceeds the {MAX_VALIDATION_DEPTH} level validation limit"));
-                }
                 if stack.is_empty() && root.is_some() {
                     return Err("multiple root elements".into());
                 }
-                nodes = nodes.saturating_add(1);
-                if nodes > MAX_VALIDATION_NODES {
-                    return Err(format!("XML exceeds the {MAX_VALIDATION_NODES} node validation limit"));
-                }
-                let n = node(&e)?;
-                attributes = attributes.saturating_add(n.attrs.len());
-                if attributes > MAX_VALIDATION_ATTRIBUTES {
-                    return Err(format!("XML exceeds the {MAX_VALIDATION_ATTRIBUTES} attribute validation limit"));
-                }
+                let n = bounded_node(&e, stack.len(), &mut nodes, &mut attributes)?;
                 if let Some(parent) = stack.last_mut() {
                     parent.content = true;
                 }
                 stack.push(n);
             }
             Event::Empty(e) => {
-                if stack.len() >= MAX_VALIDATION_DEPTH {
-                    return Err(format!("XML nesting exceeds the {MAX_VALIDATION_DEPTH} level validation limit"));
-                }
                 if stack.is_empty() && root.is_some() {
                     return Err("multiple root elements".into());
                 }
-                nodes = nodes.saturating_add(1);
-                if nodes > MAX_VALIDATION_NODES {
-                    return Err(format!("XML exceeds the {MAX_VALIDATION_NODES} node validation limit"));
-                }
-                let n = node(&e)?;
-                attributes = attributes.saturating_add(n.attrs.len());
-                if attributes > MAX_VALIDATION_ATTRIBUTES {
-                    return Err(format!("XML exceeds the {MAX_VALIDATION_ATTRIBUTES} attribute validation limit"));
-                }
+                let n = bounded_node(&e, stack.len(), &mut nodes, &mut attributes)?;
                 match stack.last_mut() {
                     Some(p) => {
                         p.content = true;
