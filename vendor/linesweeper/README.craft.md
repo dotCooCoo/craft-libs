@@ -6,8 +6,8 @@ changes listed under Local changes. `.cargo_vcs_info.json` names the commit it w
 names, which is archived; its README says development moved off GitHub.
 
 Every file here except this one, `SOURCE.json` and the files under Local changes
-(`src/sweep/sweep_line.rs` and `src/perturbation.rs`) is byte for byte the file in the `.crate`
-archive. `SOURCE.json` records the hash of the `.crate` download
+(`src/sweep/sweep_line.rs`, `src/perturbation.rs` and `docs/sweep.typ`) is byte for byte the file in
+the `.crate` archive. `SOURCE.json` records the hash of the `.crate` download
 (`source_archive_sha256`) and, for every file kept, the hash in the package (`source_sha256`) and the
 hash here (`sha256`). `upstream_repository` is null because no public repository this copy can name
 holds `upstream_revision`. `local_patches` describes each local change.
@@ -18,6 +18,9 @@ holds `upstream_revision`. `local_patches` describes each local change.
 |---|---|---|---|
 | The doc comment of `SweepLine::line_segment` says it can return a segment that has exited, which `segment_range` leaves out | `Craft patch (exited slots)` | `src/sweep/sweep_line.rs` | None (doc comment only) |
 | A ulp step past `f64::MAX` in the test-only `F64Perturbation::apply` gives infinity; `Ulp(2)` of `f64::MAX` gave NaN | `Craft patch (ulp overflow)` | `src/perturbation.rs` | `ulp_step_past_f64_max_is_infinite` |
+| The intersection scan to the left in `docs/sweep.typ` compares each segment with `alpha^(i+1)` instead of `alpha^i`. With `alpha^i`, its first pass compared `alpha^i` with itself, and the lemma after it is stated for `alpha^(i+1)` | None | `docs/sweep.typ` | None |
+| Two typos in `docs/sweep.typ` are corrected: "condi0.2tions" reads "conditions", and `q(i+i)` reads `q(i+1)`, the first index for which `q` is false | None | `docs/sweep.typ` | None |
+| The lemma for the intersection scan to the left in `docs/sweep.typ` asks for the ordering invariant on `(alpha^1, ..., alpha^(i+1))` and the crossing invariant on `(alpha^1, ..., alpha^i)`, which is how the bidirectional lemma uses it. The argument for the order invariant cites the crossing invariant instead of a "third invariant"; the document defines two | None | `docs/sweep.typ` | None |
 
 Every change here updates this table and `SOURCE.json` in the same commit. To take a new linesweeper
 release, unpack the crates.io package, carry these changes over, regenerate `SOURCE.json`, and run the
