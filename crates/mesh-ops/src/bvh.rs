@@ -470,9 +470,9 @@ impl Bvh {
     }
 
     /// Call `f` with every triangle (original index) whose bounds overlap the box. A box with a
-    /// NaN coordinate overlaps nothing.
+    /// NaN coordinate, or a lower corner past the upper corner on any axis, overlaps nothing.
     pub fn query_box(&self, lo: Vec3, hi: Vec3, mut f: impl FnMut(u32)) {
-        if lo.is_nan() || hi.is_nan() {
+        if lo.is_nan() || hi.is_nan() || lo.cmpgt(hi).any() {
             return;
         }
         let mut stack = vec![0u32];
@@ -876,6 +876,10 @@ mod tests {
         let mut calls = 0;
         bvh.query_box(Vec3::new(f32::NAN, -1.0, -1.0), Vec3::ONE, |_| calls += 1);
         bvh.query_box(Vec3::splat(-1.0), Vec3::new(1.0, f32::NAN, 1.0), |_| calls += 1);
+        // A box whose lower corner is past its upper corner on one axis is empty, even where a
+        // triangle spans both values.
+        bvh.query_box(Vec3::new(0.3, -1.0, -1.0), Vec3::new(0.2, 1.0, 1.0), |_| calls += 1);
+        bvh.query_box(Vec3::new(-1.0, -1.0, 0.3), Vec3::new(1.0, 1.0, 0.2), |_| calls += 1);
         assert_eq!(calls, 0);
         // An infinite box is a valid query and finds everything.
         bvh.query_box(Vec3::NEG_INFINITY, Vec3::INFINITY, |_| calls += 1);
