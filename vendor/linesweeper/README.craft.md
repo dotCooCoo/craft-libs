@@ -13,10 +13,13 @@ holds `upstream_revision`. `local_patches` describes each local change.
 
 ## Local changes
 
-Two files are patched: `src/sweep/sweep_line.rs` and `src/segments.rs`.
+Three files are patched: `src/sweep/sweep_line.rs`, `src/segments.rs` and `docs/sweep.typ`.
 
 | Change | Code comment label | Touches | Tests |
 |---|---|---|---|
+| The intersection scan to the left compares each segment with `alpha^(i+1)` instead of `alpha^i`. With `alpha^i`, its first pass compared `alpha^i` with itself, and the lemma after it is stated for `alpha^(i+1)` | none | `docs/sweep.typ` | none |
+| Two typos are corrected. "condi0.2tions" reads "conditions", and `q(i+i)` reads `q(i+1)`, the first index for which `q` is false | none | `docs/sweep.typ` | none |
+| The lemma for the intersection scan to the left asks for the ordering invariant on `(alpha^1, ..., alpha^(i+1))` and the crossing invariant on `(alpha^1, ..., alpha^i)`, which is how the bidirectional lemma uses it. The argument for the order invariant cites the crossing invariant instead of a "third invariant"; the document defines two | none | `docs/sweep.typ` | none |
 | The doc comment of `SweepLine::line_segment` says it can return a segment that has exited, which `segment_range` leaves out | `Craft patch (exited slots)` | `src/sweep/sweep_line.rs` | none (doc comment only) |
 | Adding paths one at a time no longer sorts every entrance and exit in the arena on each call: the new entries are sorted and merged into the sorted ones, in the same order as before. `Segments::add_bez_paths` and `Segments::add_non_closed_bez_paths` add many paths and merge once; on an open subpath, `add_bez_paths` keeps the paths before it and adds nothing of that path or later ones | `Craft patch (batch paths)` | `src/segments.rs` | `segments::tests::add_bez_paths_matches_repeated_add_bez_path`, `segments::tests::add_non_closed_bez_paths_matches_repeated_add_non_closed_bez_path`, `segments::tests::add_bez_paths_stops_at_an_open_path`, `segments::tests::merged_entrances_and_exits_match_a_full_sort`, `segments::tests::paths_added_in_height_order_are_not_sorted_again` |
 
