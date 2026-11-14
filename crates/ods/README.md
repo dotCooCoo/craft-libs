@@ -35,3 +35,9 @@ expanded; blank padding past the grid's edge is clipped, data past it is an erro
 `craft-xml`'s depth and attribute limits. At most 1024 tables.
 
 `Options::only_sheet` keeps one sheet's cells and lists the others by name.
+
+## Features
+
+- `test-support`: `testing`, which builds small `.ods` packages in code (`spreadsheet`,
+  `content`, `package`), for the tests of crates that read spreadsheets. Not a general
+  spreadsheet writer.
