@@ -4,7 +4,7 @@ This is the crates.io linesweeper 0.5.0 package (MIT OR Apache-2.0) with some fi
 changes listed under Local changes. `.cargo_vcs_info.json` names the commit it was packaged from,
 `824b0791a750f7b27b8edcbb6c6244d0e629875e`. That commit is not in the GitHub repository the manifest
 names, which is archived; its README says development moved off GitHub.
-The patched files are `src/sweep/sweep_line.rs` and `src/curve/mod.rs`.
+The patched files are `src/sweep/sweep_line.rs`, `src/curve/mod.rs` and `docs/sweep.typ`.
 
 Every file here except this one, `SOURCE.json` and the files under Local changes is byte for byte the
 file in the `.crate` archive. `SOURCE.json` records the hash of the `.crate` download
@@ -18,6 +18,9 @@ holds `upstream_revision`. `local_patches` describes each local change.
 |---|---|---|---|
 | The doc comment of `SweepLine::line_segment` says it can return a segment that has exited, which `segment_range` leaves out | `Craft patch (exited slots)` | `src/sweep/sweep_line.rs` | none |
 | In `intersect_cubics_rec`, the exact check that both curves are on the interval's side at each re-centered interval end runs only with the `slow-asserts` feature. Without the change, debug builds panicked on finite curves near 1e8, where the rounded end puts the curves on the wrong side by up to 69 times `ish_tolerance`; release builds already skipped the check | `Craft patch (end order check)` | `src/curve/mod.rs` | `curve::test::crossing_at_large_coordinates` |
+| The intersection scan to the left compares each segment with `alpha^(i+1)` instead of `alpha^i`. With `alpha^i`, its first pass compared `alpha^i` with itself, and the lemma after it is stated for `alpha^(i+1)` | none (document text) | `docs/sweep.typ` | none |
+| Two typos are corrected. "condi0.2tions" reads "conditions", and `q(i+i)` reads `q(i+1)`, the first index for which `q` is false | none (document text) | `docs/sweep.typ` | none |
+| The lemma for the intersection scan to the left asks for the ordering invariant on `(alpha^1, ..., alpha^(i+1))` and the crossing invariant on `(alpha^1, ..., alpha^i)`, which is how the bidirectional lemma uses it. The argument for the order invariant cites the crossing invariant instead of a "third invariant"; the document defines two | none (document text) | `docs/sweep.typ` | none |
 
 Every change here updates this table and `SOURCE.json` in the same commit.
 
