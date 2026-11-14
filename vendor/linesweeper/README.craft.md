@@ -1,7 +1,8 @@
 # Local linesweeper 0.5.0 copy
 
 This is the crates.io linesweeper 0.5.0 package (MIT OR Apache-2.0) with some files left out and the
-local patches listed below. `.cargo_vcs_info.json` names the commit it was packaged from,
+local patches listed below, to `src/sweep/sweep_line.rs`, `src/curve/mod.rs` and `docs/sweep.typ`.
+`.cargo_vcs_info.json` names the commit it was packaged from,
 `824b0791a750f7b27b8edcbb6c6244d0e629875e`. That commit is not in the GitHub repository the manifest
 names, which is archived; its README says development moved off GitHub.
 
@@ -19,6 +20,9 @@ The patched files are `src/sweep/sweep_line.rs` and `src/curve/mod.rs`.
 |---|---|
 | `src/sweep/sweep_line.rs` | The doc comment of `SweepLine::line_segment` says it can return a segment that has exited, which `segment_range` leaves out. Code comments label the change `Craft patch (exited slots)`. |
 | `src/curve/mod.rs` | `intersect_cubics_rec` calls the new `order_from_control_points` after cutting both cubics to their shared y-range. It bounds the x gap between the two pieces by the smallest and largest control point x gap, widened by the largest control point y gap times a bound on `\|dx/dy\|` from the control polygon (`max_slope`). When that range stays more than `ish_tolerance` on one side of zero, the whole range gets `Left` or `Right` and the comparison does not recurse. Before, two nearly parallel cubics split their shared y-range into about `(height / ish_tolerance)^(1/3)` pieces even when they stayed more than `ish_tolerance` apart: a tall S-shaped cubic and a copy moved 10 * `ish_tolerance` sideways took 4,096 recursion leaves at height 1e6 and 16,384 at height 1e8; now each takes one. The `near_parallel_cubics_are_ordered_without_recursing` test counts the entries for that pair, `control_point_order_is_sound` checks every order the control points give against sampled gaps, and `control_point_order_keeps_band_contours` checks that the contours of a tall wavy band and a moved copy do not change. |
+| `docs/sweep.typ` | The intersection scan to the left compares each segment with `alpha^(i+1)` instead of `alpha^i`. With `alpha^i`, its first pass compared `alpha^i` with itself, and the lemma after it is stated for `alpha^(i+1)`. |
+| `docs/sweep.typ` | Two typos are corrected. "condi0.2tions" reads "conditions", and `q(i+i)` reads `q(i+1)`, the first index for which `q` is false. |
+| `docs/sweep.typ` | The lemma for the intersection scan to the left asks for the ordering invariant on `(alpha^1, ..., alpha^(i+1))` and the crossing invariant on `(alpha^1, ..., alpha^i)`, which is how the bidirectional lemma uses it. The argument for the order invariant cites the crossing invariant instead of a "third invariant"; the document defines two. |
 
 `omitted_files` lists the 43 files of the package left out here, with their hashes:
 
