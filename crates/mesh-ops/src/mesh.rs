@@ -236,22 +236,88 @@ pub(crate) fn check_triangles(positions: &[Vec3], indices: &[u32]) -> Result<()>
     Ok(())
 }
 
+/// A component of [`face_cross`] computed from rounded edges is kept when its magnitude is more
+/// than this times the sum of the magnitudes of its two products. The rounding error of such a
+/// component is at most `(3 + 16ε)ε` times that sum (`ε = 2^-53`; Shewchuk, "Adaptive Precision
+/// Floating-Point Arithmetic and Fast Robust Geometric Predicates", 1997, the bound for `orient2d`),
+/// so a kept component is within about `2^-20` of its exact value. This crate's own value.
+const FAST_CROSS_MARGIN: f64 = 1.0 / (1u64 << 30) as f64;
+
 /// The cross product of the edges of the triangle `a, b, c` in `f64`: twice its area times its
 /// unit normal, on the side from which its corners run counterclockwise. The edges are taken from
 /// the corner opposite the longest edge, so the two shorter edges keep their direction when a
 /// difference of corners far apart rounds: for corners `(2^80, 2^80, 0)`, `(0, 0, 0)` and
 /// `(0, 1, 0)` the edges from the first corner round to one direction, and the edges from the
-/// third corner give -Z.
-pub(crate) fn face_cross(a: DVec3, b: DVec3, c: DVec3) -> DVec3 {
-    let (ab, bc, ca) = (b - a, c - b, a - c);
+/// third corner give -Z. A component whose two products cancel past [`FAST_CROSS_MARGIN`] is
+/// computed again from the corners with [`exact_cross_component`], so a component the rounded
+/// edges lose keeps its sign: for corners `(2^80, 2^80, 0)`, `(2^-80, 0, 0)` and `(1, 1, 0)` every
+/// pair of edges rounds to one direction, and the exact product `-1 + 2^-80` gives -Z.
+pub(crate) fn face_cross(a: Vec3, b: Vec3, c: Vec3) -> DVec3 {
+    let (da, db, dc) = (a.as_dvec3(), b.as_dvec3(), c.as_dvec3());
+    let (ab, bc, ca) = (db - da, dc - db, da - dc);
     let (ab2, bc2, ca2) = (ab.length_squared(), bc.length_squared(), ca.length_squared());
-    if ab2 >= bc2 && ab2 >= ca2 {
-        ca.cross(-bc)
+    let (u, v) = if ab2 >= bc2 && ab2 >= ca2 {
+        (ca, -bc)
     } else if bc2 >= ca2 {
-        ab.cross(-ca)
+        (ab, -ca)
     } else {
-        bc.cross(-ab)
+        (bc, -ab)
+    };
+    let (u, v, corners) = (u.to_array(), v.to_array(), [a.to_array(), b.to_array(), c.to_array()]);
+    // Component k of u × v is u[i] v[j] - u[j] v[i] for the axes (i, j) that follow k.
+    let component = |i: usize, j: usize| {
+        let (Some(&ui), Some(&uj), Some(&vi), Some(&vj)) = (u.get(i), u.get(j), v.get(i), v.get(j)) else { return 0.0 };
+        let (p, q) = (ui * vj, uj * vi);
+        let (d, sum) = (p - q, p.abs() + q.abs());
+        if sum == 0.0 || d.abs() > FAST_CROSS_MARGIN * sum { d } else { exact_cross_component(corners, i, j) }
+    };
+    DVec3::new(component(1, 2), component(2, 0), component(0, 1))
+}
+
+/// The component of the cross product of the triangle `corners` along the axis that follows the
+/// axes `i` and `j`, as `a × b + b × c + c × a`. Each product of two `f32` values is exact in
+/// `f64`, and their sum is kept exactly as an expansion of non-overlapping `f64` parts
+/// (Shewchuk's `grow_expansion`), so the result is the exact component rounded once more. `f32`
+/// products stay within `2^-298` and `2^256`, where `f64` neither underflows nor overflows.
+fn exact_cross_component(corners: [[f32; 3]; 3], i: usize, j: usize) -> f64 {
+    let mut parts = [0.0f64; 6];
+    let mut len = 0;
+    let mut term = |x: f64| {
+        let mut carry = x;
+        let mut kept = 0;
+        for k in 0..len {
+            let Some(&part) = parts.get(k) else { break };
+            let (sum, err) = two_sum(carry, part);
+            if err != 0.0 {
+                if let Some(slot) = parts.get_mut(kept) {
+                    *slot = err;
+                }
+                kept += 1;
+            }
+            carry = sum;
+        }
+        if let Some(slot) = parts.get_mut(kept) {
+            *slot = carry;
+        }
+        len = kept + 1;
+    };
+    for k in 0..3 {
+        let (Some(p), Some(q)) = (corners.get(k), corners.get((k + 1) % 3)) else { continue };
+        let (Some(&pi), Some(&pj), Some(&qi), Some(&qj)) = (p.get(i), p.get(j), q.get(i), q.get(j)) else { continue };
+        term(f64::from(pi) * f64::from(qj));
+        term(-(f64::from(pj) * f64::from(qi)));
     }
+    // The parts grow in magnitude, so the smaller ones are added first.
+    parts.iter().take(len).sum()
+}
+
+/// `a + b` rounded, and the error of that rounding: the two add up to `a + b` exactly (Knuth's
+/// two-sum).
+fn two_sum(a: f64, b: f64) -> (f64, f64) {
+    let sum = a + b;
+    let b_part = sum - a;
+    let a_part = sum - b_part;
+    (sum, (a - a_part) + (b - b_part))
 }
 
 /// The unit normal of the triangle `a, b, c`, on the side from which its corners run
@@ -259,7 +325,7 @@ pub(crate) fn face_cross(a: DVec3, b: DVec3, c: DVec3) -> DVec3 {
 /// taken in `f64` with [`face_cross`], where it neither overflows nor rounds to zero for finite
 /// `f32` corners.
 pub(crate) fn face_normal(a: Vec3, b: Vec3, c: Vec3) -> Vec3 {
-    face_cross(a.as_dvec3(), b.as_dvec3(), c.as_dvec3()).try_normalize().map_or(Vec3::Z, |n| n.as_vec3())
+    face_cross(a, b, c).try_normalize().map_or(Vec3::Z, |n| n.as_vec3())
 }
 
 /// A mesh with one vertex per triangle corner, as [`flat_corners`] makes it.
@@ -669,7 +735,7 @@ impl Mesh {
         for &[a, b, c] in self.indices.as_chunks::<3>().0 {
             let (a, b, c) = (a as usize, b as usize, c as usize);
             let (Some(pa), Some(pb), Some(pc)) = (self.positions.get(a), self.positions.get(b), self.positions.get(c)) else { continue };
-            let face = face_cross(pa.as_dvec3(), pb.as_dvec3(), pc.as_dvec3());
+            let face = face_cross(*pa, *pb, *pc);
             for v in [a, b, c] {
                 if let Some(x) = sums.get_mut(v) {
                     *x += face;
@@ -2340,6 +2406,22 @@ mod tests {
             assert_eq!(flat(&positions, &indices).normals, vec![[0.0, 0.0, -1.0]; 3], "{indices:?}");
             assert_eq!(smooth(&positions, &indices), vec![-Vec3::Z; 3], "{indices:?}");
         }
+    }
+
+    #[test]
+    fn normals_keep_terms_that_differences_of_corners_lose() {
+        // Every difference of two corners rounds in f64 to a multiple of (1, 1, 0), so the edges
+        // from any corner are parallel. The exact cross product is (0, 0, -1 + 2^-80).
+        let far = 2.0f32.powi(80);
+        let positions = [[far, far, 0.0], [far.recip(), 0.0, 0.0], [1.0, 1.0, 0.0]];
+        for indices in [[0, 1, 2], [1, 2, 0], [2, 0, 1]] {
+            assert_eq!(flat(&positions, &indices).normals, vec![[0.0, 0.0, -1.0]; 3], "{indices:?}");
+            assert_eq!(smooth(&positions, &indices), vec![-Vec3::Z; 3], "{indices:?}");
+        }
+        // The same triangle turned so that its normal is +X and then -Y.
+        let turned = |f: fn([f32; 3]) -> [f32; 3]| positions.map(f);
+        assert_eq!(flat(&turned(|[x, y, z]| [z, x, y]), &[0, 1, 2]).normals, vec![[-1.0, 0.0, 0.0]; 3]);
+        assert_eq!(flat(&turned(|[x, y, z]| [y, z, x]), &[0, 1, 2]).normals, vec![[0.0, -1.0, 0.0]; 3]);
     }
 
     #[test]

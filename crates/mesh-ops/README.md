@@ -28,7 +28,9 @@ crate has no UI, does no file or network I/O and has no `unsafe` code. File form
   diagonals stay hidden after `try_flat_normals` gives each triangle its own vertices. Both
   builders take the cross products in `f64`, from the corner opposite the longest edge, so a
   triangle with a side of 1e-15 or 1e20, or a short side next to corners 2^80 apart, keeps its
-  normal. `Mesh::try_compute_normals` and `try_flat_normals`
+  normal. A component whose two products cancel is summed again exactly from the corners, so a
+  sliver whose rounded edges all point one way still gets its normal.
+  `Mesh::try_compute_normals` and `try_flat_normals`
   return `Invalid` for an index count that is not a multiple of 3, an index past the last vertex
   or a non-finite position, with the mesh unchanged; `compute_normals` skips a triangle with an
   index out of range. Tangents come from MikkTSpace, which
