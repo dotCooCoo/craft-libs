@@ -1,6 +1,7 @@
 # craft-testkit
 
 Source-level platform regression guards and verification utilities for the Craft application suite.
+Path-filter probe.
 
 ## Overview
 
