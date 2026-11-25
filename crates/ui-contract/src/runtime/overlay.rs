@@ -866,15 +866,15 @@ fn families(entries: &[OpenEntry], raised: &IdMap<u64>) -> Vec<Vec<OpenEntry>> {
 }
 
 /// The end hook: raises the families that appeared, were pressed or were asked to (`raise`), hands egui the order of
-/// every layer above the floating windows (which keep egui's own area order, where an asked raise moves them to the
-/// top), and records the open-modal fact.
+/// every layer above the floating windows (which keep egui's own area order; an asked raise lists them first, under
+/// those layers), and records the open-modal fact.
 pub(crate) fn end_pass(ctx: &Context) {
     let viewport = pass::current_viewport(ctx);
     let (current, last_ids, raise) =
         with_pass(ctx, |pass| (pass.current.clone(), pass.last.iter().map(|entry| entry.id).collect::<Vec<_>>(), pass.raise.clone()));
     let pressed = pointer::frame_raw(ctx).press.map(|press| press.origin);
     let now = pass::root_frame_nr(ctx);
-    let (order, to_top) = with_persist(ctx, viewport, |persist| {
+    let order = with_persist(ctx, viewport, |persist| {
         let stamp = |id: Id, persist: &mut Persist| {
             persist.counter += 1;
             persist.raised.insert(id, persist.counter);
@@ -916,7 +916,7 @@ pub(crate) fn end_pass(ctx: &Context) {
         let families = families(&current, &persist.raised);
         let mut order: Vec<Layer> = Vec::new();
         let mut listed: Vec<Id> = Vec::new();
-        let mut to_top: Vec<Layer> = Vec::new();
+        let mut raised: Vec<Layer> = Vec::new();
         persist.stack.clear();
         for members in &families {
             for member in members {
@@ -931,8 +931,9 @@ pub(crate) fn end_pass(ctx: &Context) {
                     order.push(member.layer);
                     listed.push(member.id);
                 } else if !member.window && members.first().is_some_and(|root| asked.contains(&root.id)) {
-                    // An asked raise of a layer left to egui's area order raises it there, as a press on it does.
-                    to_top.push(member.layer);
+                    // An asked raise of a layer left to egui's area order puts it above the others there, as a press on
+                    // it does.
+                    raised.push(member.layer);
                 }
                 persist.stack.push(member.id);
             }
@@ -959,12 +960,12 @@ pub(crate) fn end_pass(ctx: &Context) {
             .map(|(_, members)| {
                 members.iter().flat_map(|member| std::iter::once(member.rect).chain(member.anchor).chain(member.peers.iter().copied())).collect()
             });
-        (order, to_top)
+        // The asked windows go under the listed layers and above every other floating window, the ones that appeared
+        // in this pass included: egui's own raise of the layers that appear keeps their earlier order among them.
+        raised.extend(order);
+        raised
     });
     areas::set_layer_order(ctx, &order);
-    for layer in to_top {
-        areas::move_to_top(ctx, layer);
-    }
     // An owner takes a close in the frame after the request at the latest; one nobody took is for a layer that is not shown.
     pass_state::with::<Closes, _>(ctx, |closes| closes.0.retain(|(.., queued, carried)| *carried || queued + 1 >= now));
     let top_modal = current.iter().rev().find(|entry| entry.blocks_window() && !entry.exiting);

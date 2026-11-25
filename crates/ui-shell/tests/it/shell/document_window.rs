@@ -266,3 +266,42 @@ fn a_raised_fallback_document_window_comes_to_the_front() {
     fixture.frame(Vec::new());
     assert_eq!(top.get(), first.get(), "the raised window is in front");
 }
+
+/// A window raised in the pass that shows it again comes in front of the windows shown again with it, as when an app
+/// brings back its document windows with the current one raised. Guards against an asked raise that joined egui's
+/// raise of every window that appeared in that pass, which keeps their earlier order.
+#[trial]
+fn a_window_raised_as_the_windows_show_again_comes_to_the_front() {
+    use craft_ui::testing::Fixture;
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    let (shown, raise, first) = (Rc::new(Cell::new(true)), Rc::new(Cell::new(false)), Rc::new(Cell::new(None)));
+    let (showing, asked, layer) = (shown.clone(), raise.clone(), first.clone());
+    let mut fixture = Fixture::new(move |ui| {
+        if !showing.get() {
+            return;
+        }
+        for (name, at) in [("First.psd", 40.0), ("Second.psd", 80.0)] {
+            let window = DocumentWindow::new(name).id_salt(name).first_placed(Rect::from_min_size(pos2(at, at), vec2(300.0, 200.0)));
+            let raised = name == "First.psd" && asked.get();
+            let out = if raised { window.raise() } else { window }.show(ui, |_, _| {});
+            if name == "First.psd" {
+                layer.set(Some(out.output.response.layer_id));
+            }
+        }
+    });
+    fixture.settle();
+    // Where the two windows overlap.
+    let overlap = pos2(200.0, 150.0);
+    let front = |fixture: &Fixture| fixture.ctx().layer_id_at(overlap);
+    assert!(first.get().is_some() && front(&fixture) != first.get(), "the window opened last is in front");
+    shown.set(false);
+    fixture.frame(Vec::new());
+    shown.set(true);
+    raise.set(true);
+    fixture.frame(Vec::new());
+    raise.set(false);
+    fixture.frame(Vec::new());
+    assert_eq!(front(&fixture), first.get(), "the window raised as it showed again is in front");
+}
