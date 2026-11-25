@@ -23,7 +23,7 @@ use craft_keymap::Mods;
 use craft_theme::Flags;
 use egui::{Context, Id, IdMap, Pos2, Rect, Response, Ui, ViewportId};
 use smallvec::SmallVec;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 /// A part's results this pass.
@@ -701,12 +701,12 @@ pub(crate) struct PartPress {
 pub(crate) fn part_press(ctx: &Context, owner: Id, part: PartRef) -> PartPress {
     let read = PassRead::of(ctx);
     let arena = ArenaId::new(owner);
-    let (outcome, known) = with_arena_in(ctx, read.viewport, arena, read.pass_nr, |state| {
-        (state.outcome.filter(|outcome| outcome.pass == read.pass_nr), known_in(state, owner))
+    let (outcome, is_known) = with_arena_in(ctx, read.viewport, arena, read.pass_nr, |state| {
+        (state.outcome.filter(|outcome| outcome.pass == read.pass_nr), known_parts(state, owner).any(|known| known == (part.key, part.index)))
     });
     let (mods, sample, at) = read.inputs(outcome.and_then(|outcome| outcome.phase));
     match outcome {
-        Some(outcome) => part_press_in(&outcome, &known, (mods, sample, at), owner, part),
+        Some(outcome) => part_press_in(&outcome, is_known, (mods, sample, at), owner, part),
         None => PartPress { press: PressState::new(PressPhase::Idle).mods(mods).sample(sample), hovered: false, hover_pos: None },
     }
 }
@@ -1209,7 +1209,8 @@ fn in_owner_space(phase: PressPhase, target: &Hit, xf: Option<LayerMap>) -> Pres
     }
 }
 
-fn known_in(state: &ArenaState, owner: Id) -> Vec<(PartKey, Option<u64>)> {
+/// The parts of `owner` that last pass registered, and the part a press was handed to this pass.
+fn known_parts(state: &ArenaState, owner: Id) -> impl Iterator<Item = (PartKey, Option<u64>)> + '_ {
     let parts: &[PartDecl] = if state.root.is_some_and(|root| root.id == owner) {
         &state.previous_own
     } else {
@@ -1217,7 +1218,12 @@ fn known_in(state: &ArenaState, owner: Id) -> Vec<(PartKey, Option<u64>)> {
     };
     let handed =
         state.handed.filter(|(_, pass)| *pass == state.pass).map(|(part, _)| part).filter(|_| state.root.is_some_and(|root| root.id == owner));
-    parts.iter().map(|part| (part.key, part.index)).chain(handed.map(|part| (part.key, part.index))).collect()
+    parts.iter().map(|part| (part.key, part.index)).chain(handed.map(|part| (part.key, part.index)))
+}
+
+/// [`known_parts`] as a set, so each of an owner's parts is looked up in constant time.
+fn known_in(state: &ArenaState, owner: Id) -> HashSet<(PartKey, Option<u64>)> {
+    known_parts(state, owner).collect()
 }
 
 /// The part results of one owner: a part reads the press phase when it is the press winner, `Hover` when it is
@@ -1225,7 +1231,7 @@ fn known_in(state: &ArenaState, owner: Id) -> Vec<(PartKey, Option<u64>)> {
 /// registrations and reads idle.
 fn part_results_in(
     outcome: &Outcome,
-    known: &[(PartKey, Option<u64>)],
+    known: &HashSet<(PartKey, Option<u64>)>,
     (mods, sample, at): (Mods, Option<PointerSample>, Option<Pos2>),
     owner: Id,
     decls: &[PartDecl],
@@ -1233,7 +1239,8 @@ fn part_results_in(
     decls
         .iter()
         .map(|decl| {
-            let read = part_press_in(outcome, known, (mods, sample, at), owner, decl.part_ref());
+            let is_known = known.contains(&(decl.key, decl.index));
+            let read = part_press_in(outcome, is_known, (mods, sample, at), owner, decl.part_ref());
             let (key, hovered) = ((decl.key, decl.index), read.hovered);
             (
                 key,
@@ -1253,15 +1260,14 @@ fn part_results_in(
 }
 
 /// One part's press: the phase when it is the press winner, `Hover` when it is the topmost shape under the pointer,
-/// else idle. A part not in `known` reads idle.
+/// else idle. A part last pass did not register (`is_known` false) reads idle.
 fn part_press_in(
     outcome: &Outcome,
-    known: &[(PartKey, Option<u64>)],
+    is_known: bool,
     (mods, sample, at): (Mods, Option<PointerSample>, Option<Pos2>),
     owner: Id,
     part: PartRef,
 ) -> PartPress {
-    let is_known = known.contains(&(part.key, part.index));
     let mine = |hit: &Hit| hit.owner == owner && hit.part == Some(part);
     let won = outcome.target.filter(|target| is_known && mine(target));
     let hover = outcome.hover.find(|hit| is_known && mine(hit));
