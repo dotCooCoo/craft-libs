@@ -476,3 +476,52 @@ fn host_row_menu_rows_are_menu_items_and_only_a_checked_row_a_check_box() {
     assert_eq!(names(Role::MENU_ITEM), ["Options…"], "a plain host row is a menu item");
     assert_eq!(names(Role::MENU_ITEM_CHECK_BOX), ["Locked"], "a checked host row is a check box");
 }
+
+std::thread_local! {
+    /// How many times a [`CountedKey`] was cloned on this thread.
+    static KEY_CLONES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// A preset key that counts its clones.
+#[derive(Debug, PartialEq, Eq, Hash)]
+struct CountedKey(u32);
+
+impl Clone for CountedKey {
+    fn clone(&self) -> Self {
+        KEY_CLONES.with(|clones| clones.set(clones.get() + 1));
+        CountedKey(self.0)
+    }
+}
+
+impl craft_ui::contract::MemoProps for CountedKey {
+    fn key(&self, key: &mut craft_ui::contract::MemoKey) {
+        craft_ui::contract::MemoProps::key(&self.0, key);
+    }
+}
+
+/// The grid finds each tile's row by its key from an index of the shown rows: the keys a pass clones do not grow with
+/// the rows the library holds beyond those on screen. Before, each tile scanned the rows from the first and cloned every
+/// key it passed.
+#[trial]
+fn a_grid_pass_clones_keys_for_the_tiles_on_screen_not_for_every_row() {
+    let clones_in_a_pass = |presets: u32| {
+        let rows = PresetSource::new(
+            presets,
+            PresetFns::new(|presets: &u32, _| (1..=*presets).map(|key| PresetRow::item(CountedKey(key), format!("Preset {key}"), 0)).collect()),
+        );
+        let mut state = PresetState::<CountedKey>::new();
+        let mut fixture = Fixture::new(move |ui| {
+            ui.scope_builder(UiBuilder::new().max_rect(BROWSER), |ui| {
+                let _ =
+                    PresetBrowser::new("Patterns", Bind::bound(&mut state), &rows).view_lock(PresetView::Grid).reveal(CountedKey(presets)).show(ui);
+            });
+        });
+        fixture.room(vec2(480.0, 320.0)).settle();
+        let at = fixture.by_label(&format!("Preset {presets}")).expect("the last preset is scrolled into view").center();
+        KEY_CLONES.with(|clones| clones.set(0));
+        fixture.frame(vec![Event::PointerMoved(at)]);
+        KEY_CLONES.with(std::cell::Cell::get)
+    };
+    let (small, large) = (clones_in_a_pass(200), clones_in_a_pass(1_600));
+    assert!(large < small * 2, "a pass over 1,600 presets clones {large} keys, over 200 presets {small}");
+}

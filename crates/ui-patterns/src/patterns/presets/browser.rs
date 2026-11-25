@@ -41,7 +41,8 @@ use craft_i18n::matcher::Matcher;
 use craft_theme::variant::Tone;
 use egui::{Id, Pos2, Rect, Ui};
 use std::any::Any;
-use std::cell::RefCell;
+use std::cell::{OnceCell, RefCell};
+use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::rc::Rc;
 use std::sync::Arc;
@@ -459,6 +460,8 @@ struct Shown<'a, K> {
     open: Vec<bool>,
     tree: bool,
     actions: usize,
+    /// The position of each shown preset's key, made on the first [`DisplayOrder::index_of`].
+    positions: OnceCell<HashMap<&'a K, usize>>,
 }
 
 impl<K> Shown<'_, K> {
@@ -473,9 +476,27 @@ impl<K> Shown<'_, K> {
     }
 }
 
-impl<K: Clone> DisplayOrder<BrowserKey<K>> for Shown<'_, K> {
+impl<K: Clone + Eq + Hash> DisplayOrder<BrowserKey<K>> for Shown<'_, K> {
     fn len(&self) -> usize {
         self.at.len() + usize::from(self.separated()) + self.actions
+    }
+
+    fn index_of(&self, key: &BrowserKey<K>) -> Option<usize> {
+        match key {
+            BrowserKey::Preset(key) => self
+                .positions
+                .get_or_init(|| {
+                    let mut positions = HashMap::with_capacity(self.at.len());
+                    for (at, &row) in self.at.iter().enumerate() {
+                        positions.entry(&self.rows[row].key).or_insert(at);
+                    }
+                    positions
+                })
+                .get(key)
+                .copied(),
+            BrowserKey::Separator => self.separated().then_some(self.at.len()),
+            BrowserKey::Action(index) => (*index < self.actions).then(|| self.at.len() + usize::from(self.separated()) + index),
+        }
     }
 
     fn key(&self, at: usize) -> BrowserKey<K> {
@@ -507,7 +528,7 @@ impl<K: Clone> DisplayOrder<BrowserKey<K>> for Shown<'_, K> {
     }
 }
 
-impl<K: Clone> ItemSource<BrowserKey<K>> for Shown<'_, K> {}
+impl<K: Clone + Eq + Hash> ItemSource<BrowserKey<K>> for Shown<'_, K> {}
 
 /// The positions of the rows to show: without a search, the rows outside closed groups; with one, the presets whose
 /// name matches and their groups.
@@ -1032,7 +1053,7 @@ fn list_view<K: Clone + Eq + Hash + Send + Sync + MemoProps + 'static>(props: &m
         (response, Rc::new(RowMap { rows, displayed: Vec::new() }), Pass { seen: Vec::new(), grid: Vec::new() })
     } else if view == PresetView::Grid {
         let plan = grid_plan(rows, &shown, |at| open_flags[at], counted);
-        let tiles = Shown { rows, at: plan.tiles.clone(), open: vec![false; plan.tiles.len()], tree: false, actions: 0 };
+        let tiles = Shown { rows, at: plan.tiles.clone(), open: vec![false; plan.tiles.len()], tree: false, actions: 0, positions: OnceCell::new() };
         // The grid's positions count its group header rows as the list's count its group rows: the shown rows.
         let map = Rc::new(RowMap { rows, displayed: shown.clone() });
         let tail: Vec<TailRow<BrowserKey<K>>> =
@@ -1114,7 +1135,7 @@ fn list_view<K: Clone + Eq + Hash + Send + Sync + MemoProps + 'static>(props: &m
         (out.response.response.clone(), map, Pass { seen: seen(out.response.events), grid: out.events })
     } else {
         let open: Vec<bool> = shown.iter().map(|&at| open_flags[at]).collect();
-        let source_rows = Shown { rows, at: shown.clone(), open, tree: true, actions: actions.len() };
+        let source_rows = Shown { rows, at: shown.clone(), open, tree: true, actions: actions.len(), positions: OnceCell::new() };
         let map = Rc::new(RowMap { rows, displayed: shown.clone() });
         let thumb_size = list_thumb(zoom);
         let mut list = List::<BrowserKey<K>>::new(label.clone())
