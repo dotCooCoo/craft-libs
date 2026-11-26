@@ -277,7 +277,7 @@ fn interiors_overlap(a: &Flat, b: &Flat) -> bool {
 /// Returns the number of charts. A mesh that fails the checks (indices, submesh ranges and
 /// materials, no triangle in submeshes of two materials, finite positions, finite normals and
 /// colors when it has them, at least one
-/// triangle that is not degenerate, and the default [`Limits`] that [`unwrap_core`] applies) is
+/// triangle that is not degenerate, and the default [`Limits`]) is
 /// left unchanged, as is one whose layout runs out of memory; running out of memory for the
 /// tangents comes after the new layout is in place.
 pub fn auto_unwrap(mesh: &mut Mesh, padding_texels: f32, resolution: u32) -> Result<usize> {

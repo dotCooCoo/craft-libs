@@ -2,7 +2,7 @@
 //!
 //! Operations on triangle meshes: area-weighted smooth normals, flat normals, MikkTSpace
 //! tangents, welding, automatic UV unwrapping, the UV-space [`UvGBuffer`] that maps texels to surface points,
-//! built-in [`primitives`] with UVs, a [`Bvh`] for ray casts and box queries (feature `bvh`) and
+//! built-in [`primitives`] with UVs, a `Bvh` for ray casts and box queries (feature `bvh`) and
 //! the [`OrbitCamera`].
 //!
 //! The functions at the crate root take plain slices: positions and normals as `[f32; 3]`, UVs as
