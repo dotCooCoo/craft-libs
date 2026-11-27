@@ -20,6 +20,7 @@ craft = { workspace = true, features = ["ui", "color-ui", "draw", "imaging", "ke
 - `ui` turns on `craft-ui` (`craft::ui`), re-exports `egui` (`craft::egui`, the egui the library is built with) and forwards `ui` to every enabled crate.
 - `screen-testing` implies `ui` and forwards to every enabled crate.
 - Each crate feature is forwarded as `<crate>-<feature>` (`platform-appearance`, `text-hyphen`, `ui-window-frame`).
+- `dispatch` exports the job schema as `craft::dispatch`. `dispatch-ipc` also enables the native IPC client helpers.
 - A crate whose `ui` needs another family's `ui` turns that family's feature on (`draw` turns on `color-ui`).
 
 The `[features]` table in `Cargo.toml` is written by `tests/features.rs` from the member crates' manifests. After changing a member's features or adding a crate, run `UPDATE_FACADE=1 cargo test -p craft -- integration::features` and commit the result. A comment on a feature line marks a crate that does not build for `wasm32-unknown-unknown`.

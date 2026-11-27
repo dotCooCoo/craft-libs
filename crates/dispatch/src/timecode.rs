@@ -174,7 +174,7 @@ impl MediaTimecode {
     pub fn validate(&self) -> Result<(), DispatchError> {
         self.rate.validate_positive("timecode rate")?;
         let reduced = Rational64::new(self.rate.num, self.rate.den)?;
-        let nominal = reduced.num / reduced.den + i64::from(reduced.num % reduced.den >= (reduced.den + 1) / 2);
+        let nominal = reduced.num / reduced.den + i64::from(reduced.num % reduced.den >= reduced.den / 2 + reduced.den % 2);
         let invalid = |what: &str| DispatchError::InvalidJobSpec(format!("invalid timecode {}: {what}", self.to_smpte_string()));
         if self.hours > 23 || self.minutes > 59 || self.seconds > 59 {
             return Err(invalid("component out of range"));
@@ -246,6 +246,13 @@ mod tests {
         let decoded: Rational64 = serde_json::from_str(r#"{"num":25,"den":0}"#).unwrap();
         assert!(decoded.validate_positive("frameRate").is_err());
         assert!(Rational64::FPS_29_97.validate_positive("frameRate").is_ok());
+    }
+
+    #[test]
+    fn a_maximum_denominator_keeps_nominal_one_labels_valid() {
+        let rate = Rational64 { num: i64::MAX - 1, den: i64::MAX };
+        assert!(MediaTimecode::parse_smpte("00:00:00:00", rate).is_ok());
+        assert!(MediaTimecode::parse_smpte("00:00:00:01", rate).is_err());
     }
 
     #[test]

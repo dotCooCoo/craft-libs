@@ -1780,6 +1780,7 @@ dependencies = [
  "craft-develop-model",
  "craft-dex",
  "craft-dialogs",
+ "craft-dispatch",
  "craft-doc",
  "craft-doc-binary",
  "craft-docpath",

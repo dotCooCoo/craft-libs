@@ -28,6 +28,7 @@ craft-color = { workspace = true, optional = true }
 craft-color-ui = { workspace = true, optional = true }
 craft-crw = { workspace = true, optional = true }
 craft-dialogs = { workspace = true, optional = true }
+craft-dispatch = { workspace = true, optional = true, default-features = false }
 craft-doc = { workspace = true, optional = true }
 craft-docpath = { workspace = true, optional = true }
 craft-draw = { workspace = true, optional = true }
@@ -424,6 +425,9 @@ develop-model = ["dep:craft-develop-model"]
 dex = ["dep:craft-dex"]
 
 dialogs = ["dep:craft-dialogs", "browse"] # native only: rfd's folder picker and file paths
+
+dispatch = ["dep:craft-dispatch"]
+dispatch-ipc = ["dispatch", "craft-dispatch/ipc"]
 
 doc = ["dep:craft-doc"]
 doc-pcraft-pixels = ["doc", "craft-doc/pcraft-pixels"]

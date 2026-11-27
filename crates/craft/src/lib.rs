@@ -83,6 +83,8 @@ pub use craft_develop_model as develop_model;
 pub use craft_dex as dex;
 #[cfg(feature = "dialogs")]
 pub use craft_dialogs as dialogs;
+#[cfg(feature = "dispatch")]
+pub use craft_dispatch as dispatch;
 #[cfg(feature = "doc")]
 pub use craft_doc as doc;
 #[cfg(feature = "doc-binary")]
