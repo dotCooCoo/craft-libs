@@ -918,14 +918,21 @@ impl<V: NumberValue + 'static> Component for NumberField<'_, V> {
         }
         if let Some(wheel) = cx.take_wheel() {
             let from = self.shown_number(cx.value()).unwrap_or_else(|| rule.blank());
-            let steps = ValueSteps::new(from, rule.low, rule.high, rule.step, rule.step * LARGE_STEPS).fine(rule.step / LARGE_STEPS);
+            let steps = if self.stepper.is_some() {
+                // A custom ladder owns the value's units and range. Read the wheel in notch units,
+                // as Slider does, so the fixed grid and its limits cannot shorten its travel.
+                ValueSteps::new(0.0, f64::NEG_INFINITY, f64::INFINITY, 1.0, LARGE_STEPS)
+            } else {
+                ValueSteps::new(from, rule.low, rule.high, rule.step, rule.step * LARGE_STEPS).fine(rule.step / LARGE_STEPS)
+            };
             // A notch that changes the value proposes it; the runtime's zero-scroll end share changes none and ends
             // the run.
             let next = match wheel_step(&steps, ValueAxes::Both, &wheel, cx.env.direction().is_rtl()) {
                 StepResult::Set(next) => {
                     let next = match &self.stepper {
-                        Some(stepper) if next != from => stepper.next(from, if next > from { 1 } else { -1 }, 1.0),
-                        _ => round_to(next, decimals_for_step(rule.step / LARGE_STEPS)),
+                        Some(stepper) if next != 0.0 => stepper.next(from, if next > 0.0 { 1 } else { -1 }, next.abs()),
+                        Some(_) => from,
+                        None => round_to(next, decimals_for_step(rule.step / LARGE_STEPS)),
                     };
                     let next = rule.settle(next);
                     (next != from).then(|| V::of_number(self.to_stored(next)))

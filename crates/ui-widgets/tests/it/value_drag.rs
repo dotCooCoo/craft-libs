@@ -147,6 +147,61 @@ fn a_log_slider_steps_in_the_callers_values() {
     assert_eq!(*value.borrow(), 20.0);
 }
 
+/// A caller's shared ladder gives a number field and slider the same wheel travel, including
+/// multiple notches, modifiers, a change in step size, and the range ends.
+#[trial]
+fn a_shared_custom_stepper_keeps_number_and_slider_wheel_magnitude() {
+    use craft_ui::text::NumberField;
+
+    fn ladder(from: f64, direction: i32, steps: f64) -> f64 {
+        let unit = if from < 0.1 || from == 0.1 && direction < 0 { 0.01 } else { 0.1 };
+        from + f64::from(direction) * steps * unit
+    }
+
+    fn turned(number: bool, start: f64, notches: f32, modifiers: Modifiers) -> f64 {
+        let value = Rc::new(RefCell::new(start));
+        let shown = value.clone();
+        let mut fixture = Fixture::new(move |ui| {
+            if number {
+                let mut current = Some(*shown.borrow());
+                NumberField::new("Distance", Bind::bound(&mut current)).range(0.01..=20.0).step(0.25).stepper(ladder).show_at(ui, FIELD);
+                *shown.borrow_mut() = current.unwrap();
+            } else {
+                Slider::new(Bind::bound(&mut *shown.borrow_mut()), 0.01..=20.0).label("Distance").step(0.25).stepper(ladder).show_at(ui, FIELD);
+            }
+        });
+        fixture.motion(MotionMode::Off).settle().key(Key::Tab, Modifiers::NONE);
+        fixture.frame(vec![pointer::moved(FIELD.center())]);
+        let mut wheel = pointer::wheel_lines(notches);
+        if let egui::Event::MouseWheel { modifiers: held, .. } = &mut wheel {
+            *held = modifiers;
+        }
+        fixture.frame(vec![wheel]).settle();
+        *value.borrow()
+    }
+
+    let cases = [
+        ("plain", 0.05, 1.0, Modifiers::NONE),
+        ("multiple notches", 0.05, 3.0, Modifiers::NONE),
+        ("Shift", 0.05, 1.0, Modifiers::SHIFT),
+        ("Alt", 0.05, 1.0, Modifiers::ALT),
+        ("cross the step boundary", 0.09, 3.0, Modifiers::NONE),
+        ("step down at the boundary", 0.1, -3.0, Modifiers::NONE),
+        ("upper limit", 19.99, 3.0, Modifiers::SHIFT),
+        ("lower limit", 0.02, -3.0, Modifiers::NONE),
+    ];
+    let mut differences = Vec::new();
+    for (name, start, notches, modifiers) in cases {
+        let number = turned(true, start, notches, modifiers);
+        let slider = turned(false, start, notches, modifiers);
+        assert_ne!(slider, start, "{name}: the wheel must reach the control");
+        if (number - slider).abs() > 1e-9 {
+            differences.push((name, number, slider));
+        }
+    }
+    assert!(differences.is_empty(), "shared ladder differs between NumberField and Slider: {differences:?}");
+}
+
 #[trial]
 fn a_grabbed_slider_thumb_moves_by_the_pointer_travel_and_a_click_on_it_changes_nothing() {
     let centred = dragged_from(0.0, 10.0);
