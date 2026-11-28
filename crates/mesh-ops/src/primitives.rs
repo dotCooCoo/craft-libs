@@ -794,13 +794,16 @@ mod tests {
         }
 
         let seams = mesh.uv_seam_edges();
-        for row in 1..rows - 1 {
-            let (top, bottom) = (row * width, (row + 1) * width);
-            let found = seams[0].iter().any(|&(from, to)| {
+        let is_seam = |a: usize, b: usize| {
+            seams[0].iter().any(|&(from, to)| {
                 let (from, to) = (from as usize, to as usize);
-                (from.min(to), from.max(to)) == (top, bottom) || (from.min(to), from.max(to)) == (top + cols, bottom + cols)
-            });
-            assert!(found, "meridian edge below row {row} is not a seam");
+                (from.min(to), from.max(to)) == (a.min(b), a.max(b))
+            })
+        };
+        for row in 0..rows {
+            let (top, bottom) = (row * width, (row + 1) * width);
+            assert!(is_seam(top, bottom), "u = 0 meridian edge below row {row} is not a seam");
+            assert!(is_seam(top + cols, bottom + cols), "u = 1 meridian edge below row {row} is not a seam");
         }
     }
 
