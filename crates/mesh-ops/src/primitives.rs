@@ -187,7 +187,8 @@ fn lathe_into(b: &mut Builder, center: Vec3, profile: &[(f32, f32)], segs: usize
         let t = Vec2::new(next.0 - prev.0, next.1 - prev.1).try_normalize().unwrap_or(Vec2::NEG_Y);
         let n2 = Vec2::new(-t.y, t.x);
         let u = j as f32 / segs as f32;
-        let phi = u * TAU + PI * 1.5;
+        // The seam column `j == segs` repeats column 0's position, so the ring closes exactly.
+        let phi = ((j % segs) as f32 / segs as f32) * TAU + PI * 1.5;
         let dir = Vec3::new(phi.cos(), 0.0, -phi.sin());
         let p = center + dir * rad + Vec3::Y * y;
         let n = dir * n2.x + Vec3::Y * n2.y;
@@ -328,9 +329,11 @@ fn disk_into(b: &mut Builder, center: Vec3, radius: f32, up: bool, segs: usize, 
     let c = b.vert(center, n, r.map(0.5, 0.5));
     let first = b.p.len() as u32;
     for j in 0..segs {
-        // Starts at +Z, the first sample of `lathe_into`, so the rim matches the side at any `segs`.
-        let a = PI * 0.5 + j as f32 / segs as f32 * TAU;
-        let (x, z) = (a.cos(), a.sin());
+        // Rim sample `j` is `lathe_into`'s sample `(segs - j) % segs`, computed with the same
+        // expression, so cap and side rim positions are bit-identical at any `segs`.
+        let u = ((segs - j) % segs) as f32 / segs as f32;
+        let phi = u * TAU + PI * 1.5;
+        let (x, z) = (phi.cos(), -phi.sin());
         // Top view: +X right, +Z down the texture; bottom view mirrors X.
         let uv = if up { r.map(0.5 + x * 0.5, 0.5 + z * 0.5) } else { r.map(0.5 + x * 0.5, 0.5 - z * 0.5) };
         b.vert(center + Vec3::new(x, 0.0, z) * radius, n, uv);
@@ -550,14 +553,37 @@ mod tests {
 
     #[test]
     fn cylinder_caps_share_the_side_rim_samples() {
-        for segs in [3, 5, 6, 7, 8] {
+        let bits = |p: Vec3| p.to_array().map(f32::to_bits);
+        for segs in [3, 5, 6, 7, 8, 11, 13, 17, 31, 64, 100, 257] {
             let m = cylinder(1.0, 2.0, segs);
             let side: Vec<Vec3> = (0..m.positions.len()).filter(|&i| m.normals[i].y.abs() < 1e-4).map(|i| m.positions[i]).collect();
             let rim = (0..m.positions.len()).filter(|&i| m.normals[i].y.abs() > 0.99 && Vec2::new(m.positions[i].x, m.positions[i].z).length() > 0.5);
             for i in rim {
                 let p = m.positions[i];
-                assert!(side.iter().any(|s| s.distance(p) < 1e-5), "segs {segs}: cap rim vertex {p:?} is not on a side rim sample");
+                assert!(side.iter().any(|&s| bits(s) == bits(p)), "segs {segs}: cap rim vertex {p:?} is not bit-identical to a side rim sample");
             }
+            // Every side edge along a rim has a cap edge with the same end positions.
+            let edges = |cap: bool| {
+                let mut out = std::collections::HashSet::new();
+                for t in m.indices.as_chunks::<3>().0 {
+                    let is_cap = m.normals[t[0] as usize].y.abs() > 0.99;
+                    if is_cap != cap {
+                        continue;
+                    }
+                    for (a, b) in [(t[0], t[1]), (t[1], t[2]), (t[2], t[0])] {
+                        let (pa, pb) = (m.positions[a as usize], m.positions[b as usize]);
+                        let on_rim = |p: Vec3| p.y.abs() == 1.0 && Vec2::new(p.x, p.z).length() > 0.5;
+                        if on_rim(pa) && on_rim(pb) && pa.y == pb.y {
+                            let (ka, kb) = (bits(pa), bits(pb));
+                            out.insert(if ka < kb { (ka, kb) } else { (kb, ka) });
+                        }
+                    }
+                }
+                out
+            };
+            let (side_edges, cap_edges) = (edges(false), edges(true));
+            assert_eq!(side_edges.len(), 2 * segs, "segs {segs}: side rim edges");
+            assert!(side_edges.is_subset(&cap_edges), "segs {segs}: a side rim edge has no cap edge with the same end positions");
         }
     }
 
